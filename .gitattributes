@@ -1,0 +1,53 @@
+# Set default behavior to automatically normalize line endings
+* text=auto eol=lf
+
+# Explicit text files
+*.kt text eol=lf diff=kotlin
+*.kts text eol=lf diff=kotlin
+*.java text eol=lf diff=java
+*.xml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.gradle text eol=lf
+*.properties text eol=lf
+*.sh text eol=lf
+*.cpp text eol=lf diff=cpp
+*.c text eol=lf diff=cpp
+*.h text eol=lf diff=cpp
+*.hpp text eol=lf diff=cpp
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+
+# Windows command scripts
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files - Git should not attempt to modify or merge
+*.docx binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.jar binary
+*.aar binary
+*.so binary
+*.a binary
+
+# Audio and MIDI assets
+*.wav binary
+*.mp3 binary
+*.flac binary
+*.m4a binary
+*.ogg binary
+*.pcm binary
+*.mid binary
+*.midi binary
+
+# Database files
+*.db binary
+*.sqlite binary
+*.sqlite3 binary

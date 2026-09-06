@@ -1,0 +1,72 @@
+# Built application files
+*.apk
+*.ap_
+*.aab
+*.dex
+
+# Files for the ART/Dalvik VM
+*.class
+
+# Java / JVM
+*.log
+hs_err_pid*
+
+# Gradle files
+.gradle/
+build/
+*/build/
+*/*/build/
+
+# Android Studio and IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+local.properties
+.navigation/
+captures/
+output.json
+.externalNativeBuild
+.cxx/
+cmake-build-*/
+
+# NDK / C++ build outputs
+*.so
+*.o
+*.a
+
+# Signing / Keystores / Secrets
+*.jks
+*.keystore
+signing.properties
+google-services.json
+
+# Test and Profiler outputs
+*.hprof
+trace.txt
+baselineProfiles/
+
+# Audio and temporary recording artifacts (local test files)
+*.pcm
+*.pcm.tmp
+events.log
+*.wav
+*.flac
+*.m4a
+*.mp3
+*.mid
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*~
+*.swp
+*.swo
+
+# Visual Studio Code
+.vscode/
