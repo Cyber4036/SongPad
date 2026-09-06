@@ -7,12 +7,14 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Fast & Free PR Gate
   pr-validation:
     name: Build, Lint & Unit Tests
     runs-on: ubuntu-latest
@@ -45,6 +47,7 @@ jobs:
           name: unit-test-reports
           path: '**/build/reports/'
 
+  # Main Branch Gate: Instrumented Emulator Tests (API 30 & API 35)
   instrumented-tests:
     name: Instrumented Tests (API 30 & API 35)
     needs: pr-validation
@@ -79,3 +82,32 @@ jobs:
           arch: x86_64
           profile: pixel_6
           script: ./gradlew connectedCheck
+
+  # Package APK for Team Physical Device Testing (Pixel, Samsung, Xiaomi, Transsion)
+  package-device-build:
+    name: Package APK for Physical Device Testing
+    needs: pr-validation
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Assemble Debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK for Physical Testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: songpad-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14

@@ -73,3 +73,18 @@ Every Pull Request must pass the following test gates prior to merging:
 1. **Semantic Tokens Only**: Never reference raw hex codes (e.g., `#F5EAD8`) directly in feature composables. Always use semantic roles (`bg`, `surface`, `text`, `accent`, `accent-2`, `record`, `divider`).
 2. **Touch Targets**: All interactive elements must maintain a minimum touch target of **48 × 48 dp**.
 3. **Canvas Drawing**: Waveform and piano canvas implementations must read accent and record colors dynamically from the active theme token layer.
+
+---
+
+## 🤖 CI & Physical Multi-Device Testing Strategy
+
+Automated cloud device farms (such as nightly Firebase Test Lab matrices) have fundamental blindspots for SongPad's core value proposition:
+- **Acoustic feedback & microphone nuance**: In Voice + Piano mode, the microphone acoustically captures speaker output. Remote server racks cannot evaluate whether acoustic capture sounds musical, distorted, or out of sync.
+- **Perceived latency**: Only human ears and touch can validate whether touch-to-tone latency is musical.
+- **Aggressive OEM behavior**: Aggressive process management on Transsion (Tecno/Infinix) and Xiaomi/HyperOS during phone calls, screen locks, and backgrounding is verified much more reliably on actual hardware in daily use.
+
+### Testing Pipeline
+1. **PR Gate (Fast & Free)**: Build, lint, and JVM unit tests (< 10 min gate).
+2. **Main Gate**: KVM-accelerated emulator instrumented tests on API 30 and API 35.
+3. **Physical Device Packaging**: On merge to `main` (and via manual workflow dispatch), CI packages debug APK artifacts. At the end of major development runs, team members install these builds directly onto physical target devices (Pixel baseline, Samsung, Xiaomi/HyperOS, Transsion) to validate real-world audio, latency, and crash recovery.
+

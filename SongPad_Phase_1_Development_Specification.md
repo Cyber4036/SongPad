@@ -898,9 +898,9 @@ Testing is written inside each phase, not appended in Week 11.
 Device matrix: one Pixel (clean baseline), one Samsung (share), one **Xiaomi/HyperOS** and one **Transsion (Tecno/Infinix)** (aggressive process management and low-end audio hardware — this is where reliability breaks first, and given the target market they are not optional).
 
 CI (GitHub Actions):
-1. **Every PR** — build, lint, JVM unit tests. Must be under ~10 minutes or people route around it.
-2. **Every merge to main** — instrumented tests on KVM-accelerated Linux runners (`reactivecircus/android-emulator-runner`), API 30 and a current API. KVM on standard Linux runners removes the old need for expensive macOS runners.
-3. **Nightly / pre-release** — Firebase Test Lab across the device matrix. Not a blocking per-commit gate; FTL has had capacity incidents and should not be able to block a merge.
+1. **Every PR** — build, lint, JVM unit tests (fast & free). Must be under ~10 minutes or people route around it.
+2. **Every merge to main** — instrumented tests on KVM-accelerated Linux runners (`reactivecircus/android-emulator-runner`), API 30 and a current API.
+3. **Physical device milestone validation (replaces Nightly Firebase Matrix)** — Automated cloud test farms cannot evaluate acoustic capture (e.g. mic picking up speaker output in Voice+Piano mode), real perceived touch-to-tone latency, or aggressive OEM behavioral kills. Automated Nightly Firebase matrix is dropped; instead, CI packages APK artifacts on `main` and milestone ends for direct validation on physical devices (Pixel, Samsung, Xiaomi/HyperOS, Transsion).
 
 ---
 
