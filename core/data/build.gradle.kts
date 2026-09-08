@@ -3,15 +3,17 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.room)
 }
+
+// :core:data — Room on BundledSQLiteDriver, FTS5 tables and triggers, migrations, repositories, file store (§5, §6, §9, §10).
 
 android {
     namespace = "com.songpad.core.data"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 30
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
     }
@@ -19,10 +21,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 
@@ -31,32 +30,51 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    sourceSets {
+        // Exported schema JSON (§6.4) is available to MigrationTestHelper.
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 }
 
+room {
+    // §6.4: export schema JSON to VCS from commit one.
+    schemaDirectory("$projectDir/schemas")
+}
+
 dependencies {
-    implementation(project(":core:model"))
+    api(project(":core:model"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
 
-    // Room & Bundled SQLite Driver
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
-    ksp(libs.androidx.room.compiler)
+    // Room + bundled SQLite (FTS5 guaranteed by the bundled build, §4.2)
+    api(libs.androidx.room.runtime)
+    api(libs.androidx.sqlite)
     implementation(libs.androidx.sqlite.bundled)
+    ksp(libs.androidx.room.compiler)
 
-    // Dependency Injection
+    // Settings
+    implementation(libs.androidx.datastore.preferences)
+
+    // Maintenance workers (§9.2, §9.3)
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
+
+    // DI
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
     testImplementation(libs.junit)
-    testImplementation(libs.truth)
+    testImplementation(libs.google.truth)
     testImplementation(libs.turbine)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(project(":core:data:testing"))
+
     androidTestImplementation(libs.androidx.test.ext.junit)
-    androidTestImplementation(libs.androidx.test.espresso.core)
+    androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.google.truth)
+    androidTestImplementation(libs.turbine)
 }
