@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">SongPad</string>
+    <string name="recording_channel_name">Recording</string>
+    <string name="nudges_channel_name">Gentle nudges</string>
 </resources>

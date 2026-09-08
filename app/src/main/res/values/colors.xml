@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- SongPad accent (§14 palette primitive, OKLCH-derived sRGB) -->
+    <color name="ic_launcher_background">#1E1B2E</color>
+    <color name="ic_launcher_foreground_tint">#F2C14E</color>
+</resources>

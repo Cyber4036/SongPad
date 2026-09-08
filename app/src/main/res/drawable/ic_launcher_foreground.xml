@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A microphone capsule with a waveform: placeholder launcher art until design delivers the final icon. -->
+    <path
+        android:fillColor="@color/ic_launcher_foreground_tint"
+        android:pathData="M54,30a9,9 0 0 1 9,9v15a9,9 0 0 1 -18,0V39a9,9 0 0 1 9,-9zM39,54h4a11,11 0 0 0 22,0h4a15,15 0 0 1 -13,14.8V74h8v4H44v-4h8v-5.2A15,15 0 0 1 39,54z" />
+    <path
+        android:strokeColor="@color/ic_launcher_foreground_tint"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M24,50v8M30,44v20M78,44v20M84,50v8" />
+</vector>
