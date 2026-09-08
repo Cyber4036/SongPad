@@ -5,13 +5,15 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// :core:midi — MIDI event collector, events.log crash-safety, SMF Type 0 serializer (§8.4, §8.5).
+// The sampler voice engine and keyboard Canvas (§8.1, §8.2) are gated on spikes S-2 and S-3 and are NOT here yet.
+
 android {
     namespace = "com.songpad.core.midi"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 30
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
     }
@@ -19,10 +21,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 
@@ -30,24 +29,18 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 }
 
 dependencies {
-    implementation(project(":core:model"))
+    api(project(":core:model"))
     implementation(project(":core:audio"))
 
-    implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.core)
-
-    // Dependency Injection
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
     testImplementation(libs.junit)
-    testImplementation(libs.truth)
-    androidTestImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.google.truth)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(project(":core:data:testing"))
 }
