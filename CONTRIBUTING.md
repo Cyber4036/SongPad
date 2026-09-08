@@ -39,7 +39,7 @@ Use conventional commit messages:
 
 ## 📜 Contract Change Process (§15)
 
-The core interfaces defined in `SongPad_Phase_1_Development_Specification.md` (§15) are:
+The core interfaces defined in `SongPad_Phase_1_Development_Specification.md` (§15) live in `:core:model` (`core/model/src/main/kotlin/com/songpad/core/model/{audio,midi,data}`; see `docs/CONTRACTS_FROZEN.md` and ADR-0030). They are:
 - `AudioRecorderEngine`
 - `PlaybackController`
 - `MidiCaptureEngine`
@@ -51,6 +51,20 @@ The core interfaces defined in `SongPad_Phase_1_Development_Specification.md` (�
 1. Written rationale and approval from the Technical Lead.
 2. An update to `SongPad_Phase_1_Development_Specification.md`.
 3. Simultaneous updates to corresponding fakes in `:core:data:testing`.
+4. A row in the change log of `docs/CONTRACTS_FROZEN.md`.
+
+## 🚫 Banned APIs (rejected by default in review)
+
+- `android.app.AlarmManager` in any form — WorkManager is the only scheduler (ADR-0028).
+- Any coroutine dispatcher on the capture path (`Dispatchers.IO` / `Default` for audio) — ADR-0009.
+- `file://` URIs for sharing — FileProvider only (ADR-0020).
+- Raw hex colors in feature composables — semantic tokens only (§14).
+- A feature module depending on another feature module — the root build fails it (`checkModuleBoundaries`).
+
+## 📝 Decision records
+
+Every LOCKED decision has an ADR under `docs/adr/`. Changing one means writing a superseding ADR with the rejected
+alternatives recorded, not editing the old one.
 
 ---
 

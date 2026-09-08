@@ -13,12 +13,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NDK_VERSION: 28.2.13676358
+
 jobs:
-  # Fast & Free PR Gate
+  # Fast PR gate: boundaries, JVM tier, every module's unit tests, lint, native build via assembleDebug.
   pr-validation:
-    name: Build, Lint & Unit Tests
+    name: Boundaries, Unit Tests, Lint, Assemble
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
 
     steps:
       - name: Checkout Code
@@ -29,30 +32,53 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
       - name: Validate Gradle Wrapper
         uses: gradle/actions/wrapper-validation@v4
 
-      - name: Check Code Style & Lint
-        run: ./gradlew lintDebug --continue
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Run JVM Unit Tests
-        run: ./gradlew testDebugUnitTest --continue
+      - name: Install NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" "cmake;3.22.1" "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Upload Test Reports
-        if: failure()
+      - name: Module boundaries
+        run: ./gradlew checkModuleBoundaries --console=plain
+
+      - name: JVM tier (pure Kotlin)
+        run: ./gradlew :core:model:test :core:data:testing:test :spikes:s4-fts5:test --continue --console=plain
+
+      - name: Android module unit tests
+        run: ./gradlew testDebugUnitTest --continue --console=plain
+
+      - name: Lint
+        run: ./gradlew lintDebug --continue --console=plain
+
+      - name: Assemble Debug (includes the Oboe native build)
+        run: ./gradlew assembleDebug --console=plain
+
+      - name: S-4 spike report
+        run: ./gradlew :spikes:s4-fts5:run --console=plain
+
+      - name: Upload Reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: unit-test-reports
-          path: '**/build/reports/'
+          name: reports
+          path: |
+            **/build/reports/
+            **/build/test-results/
+            docs/spikes/S-4-report.md
 
-  # Main Branch Gate: Instrumented Emulator Tests (API 30 & API 35)
+  # Main Branch Gate: Instrumented Emulator Tests (API 30 & API 35) — Room, migrations, FTS on device SQLite path.
   instrumented-tests:
     name: Instrumented Tests (API 30 & API 35)
     needs: pr-validation
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       matrix:
         api-level: [30, 35]
@@ -66,7 +92,14 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" "cmake;3.22.1"
 
       - name: Enable KVM group perms
         run: |
@@ -81,15 +114,15 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          script: ./gradlew connectedCheck
+          script: ./gradlew connectedDebugAndroidTest --console=plain
 
-  # Package APK for Team Physical Device Testing (Pixel, Samsung, Xiaomi, Transsion)
+  # Package APK for Team Physical Device Testing (Pixel, Samsung, Xiaomi, Transsion) — spikes S-1/S-2/S-3/S-5.
   package-device-build:
     name: Package APK for Physical Device Testing
     needs: pr-validation
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout Code
@@ -100,10 +133,17 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" "cmake;3.22.1"
 
       - name: Assemble Debug APK
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --console=plain
 
       - name: Upload APK for Physical Testing
         uses: actions/upload-artifact@v4

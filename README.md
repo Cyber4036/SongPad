@@ -57,8 +57,9 @@ SongPad is structured as a modular, unidirectional data flow (UDF) Android appli
 
 | Module | Purpose & Scope | Dependencies |
 | :--- | :--- | :--- |
-| **`:core:model`** | Domain entities, value types, validation logic. **Pure Kotlin, zero Android dependencies.** | *None* |
-| **`:core:data`** | Room database, DAOs, SQLite FTS5 tables & triggers, migrations, repository implementations, disk storage. | `:core:model` |
+| **`:core:model`** | Domain entities, value types, validation, the frozen §15 contracts, use cases, `MviStore`, `TakeFileStore`. **Pure Kotlin, zero Android dependencies.** | *None* |
+| **`:core:data`** | Room database, DAOs, SQLite FTS5 table & triggers, migrations, repository implementations, DataStore settings, maintenance workers. | `:core:model` |
+| **`:core:data:testing`** | JVM fakes for every contract over one `InMemoryStore`; used by every feature test. | `:core:model` |
 | **`:core:audio`** | Oboe C++/NDK capture & synthesis engines, circular ring buffer, waveform extraction, audio focus, foreground service. | `:core:model` |
 | **`:core:midi`** | Sampler voice coordinator (shares Oboe stream), MIDI event collector, SMF Type 0 serializer. | `:core:model`, `:core:audio` |
 | **`:core:ui`** | Semantic token architecture, four theme definitions, typography, spacing, glass pill, custom Canvas components. | *None* |
@@ -67,14 +68,20 @@ SongPad is structured as a modular, unidirectional data flow (UDF) Android appli
 | **`:feature:search`** | Global and in-song instant search UI with FTS5 highlighting and prefix filtering. | `:core:*` |
 | **`:feature:nudges`** | In-app nudge inbox, WorkManager scheduling logic, nudge settings. | `:core:*` |
 | **`:feature:export`** | Audio conversion (M4A, FLAC, WAV, LAME MP3), SAF file creation, and project zip bundle packaging. | `:core:*` |
-| **`:app`** | Application entry point, Hilt dependency injection root, Navigation graph integration. | All modules |
+| **`:app`** | Application entry point, Hilt root, Navigation 3 host and route keys, Settings screen, deep links. | All modules |
+| **`:spikes:s4-fts5`** | Desktop-runnable S-4 spike against the same bundled SQLite (`./gradlew :spikes:s4-fts5:run`). | `:core:model` |
 
 ### Non-Negotiable Architecture Rules
 
 1. **Strict Feature Isolation**: Feature modules **never** depend on one another. Cross-feature navigation is coordinated through route keys declared in `:app`.
 2. **Pure Domain Model**: `:core:model` contains **no** Android dependencies, enabling instant JVM unit testing with zero Robolectric overhead.
 3. **NDK Encapsulation**: `:core:audio` is the **only** module containing NDK/CMake/JNI code. No other module interacts directly with native binaries.
-4. **Interface Contracts**: All feature modules develop against the frozen core interfaces defined in `SongPad_Phase_1_Development_Specification.md` §15 or against test fakes.
+4. **Interface Contracts**: All feature modules develop against the frozen core interfaces (§15), declared in `:core:model` (see [`docs/CONTRACTS_FROZEN.md`](docs/CONTRACTS_FROZEN.md) and ADR-0030), or against the fakes in `:core:data:testing`.
+5. **Module boundaries are enforced at configuration time**: `./gradlew checkModuleBoundaries` (also run by the CI gate) fails the build on a forbidden project dependency; only `:core:audio` may contain a CMake build.
+
+### Phase 1 status (single-developer pass, 2026-09-07)
+
+Built and JVM-tested: module skeleton, Room schema + FTS5 + migrations scaffold, all §15 contracts and fakes, Oboe capture engine + native ring buffer, PCM writer, Media3 playback (M4A/FLAC/raw PCM), transcode worker, recovery manager, MIDI events log + SMF writer, design tokens/components, the five feature modules, the Navigation 3 shell, Settings, ADRs and docs. **Not done and not started by design:** the piano sampler and keyboard (gated on spikes S-2/S-3), the LAME sources (vendored per `docs/audio/LAME_INTEGRATION.md`), and every physical-device spike (`docs/spikes/`). No Xiaomi/HyperOS device was available.
 
 ---
 
@@ -168,6 +175,9 @@ The repository contains authoritative design, product, and engineering specifica
 | **[`Capture.html`](Capture.html)** | Interactive HTML | Design prototype and UI exploration bundle (SongPad & MelodyStudio design system). | Visual & interaction reference |
 | **[`CONTRIBUTING.md`](CONTRIBUTING.md)** | Markdown | Developer guidelines, PR checklist, branching strategy, and code conventions. | Process & conventions |
 | **[`ARCHITECTURE.md`](ARCHITECTURE.md)** | Markdown | Deep dive into audio pipelines, threading, storage layout, and crash-safety rules. | Technical reference |
+| **[`docs/adr/`](docs/adr/README.md)** | Markdown | One ADR per locked decision, the Research Pass B overrides, and placement decisions with rejected alternatives. | Decision record |
+| **[`docs/CONTRACTS_FROZEN.md`](docs/CONTRACTS_FROZEN.md)** | Markdown | Where each frozen contract lives and the change process. | Contract register |
+| **[`docs/spikes/`](docs/spikes/README.md)** | Markdown | Spike protocols, thresholds and results (S-4 generated; S-1/2/3/5 pending hardware). | Spike record |
 
 ---
 
@@ -176,10 +186,10 @@ The repository contains authoritative design, product, and engineering specifica
 ### Prerequisites
 
 - **Java Development Kit**: JDK 17 (recommended: OpenJDK 17)
-- **Android SDK**: API 35 compile/target SDK, API 30 minimum SDK (Android 11+)
-- **Android NDK**: NDK r26+ (recommended: 26.3.11579264 or 28.2.13676358)
+- **Android SDK**: API 36 compile/target SDK, API 30 minimum SDK (Android 11+)
+- **Android NDK**: 28.2.13676358 (from the version catalog; installed automatically by the SDK manager)
 - **CMake**: 3.22.1+
-- **Gradle**: 8.11+ / 9.x
+- **Gradle**: 8.14.3 via the wrapper; AGP 8.13.2, Kotlin 2.3.21, KSP 2.3.11, Hilt 2.58 (see ADR-0032 for why these are pinned together)
 
 ### Environment Setup
 
@@ -196,6 +206,17 @@ Clone the repository and inspect the branch:
 git clone <repo-url> SongPad
 cd SongPad
 git status
+```
+
+### Build and test
+
+```bash
+./gradlew checkModuleBoundaries            # module dependency rules
+./gradlew :core:model:test :core:data:testing:test :spikes:s4-fts5:test   # JVM tier, seconds
+./gradlew testDebugUnitTest                # every Android module's JVM tests (fakes, no emulator)
+./gradlew assembleDebug                    # APK incl. the Oboe native library for arm64-v8a / armeabi-v7a / x86_64
+./gradlew :spikes:s4-fts5:run              # regenerates docs/spikes/S-4-report.md
+./gradlew connectedDebugAndroidTest        # Room + migration tests; needs a device or emulator
 ```
 
 ---
