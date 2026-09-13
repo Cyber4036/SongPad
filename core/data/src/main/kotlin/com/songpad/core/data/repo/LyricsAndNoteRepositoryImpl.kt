@@ -1,6 +1,6 @@
 package com.songpad.core.data.repo
 
-import androidx.room.withTransaction
+import com.songpad.core.data.db.withTransactionCompat
 import com.songpad.core.data.db.SongPadDatabase
 import com.songpad.core.data.db.entity.LyricsDocumentEntity
 import com.songpad.core.data.db.entity.NoteEntity
@@ -41,9 +41,9 @@ class LyricsRepositoryImpl @Inject constructor(
     }
 
     override suspend fun ensureDocument(songId: String): Result<LyricsDocument> = runDomain({ DataError.Io(it.message ?: "") }) {
-        db.withTransaction {
+        db.withTransactionCompat {
             val existing = dao.documentForSong(songId)
-            if (existing != null) return@withTransaction existing.toDomain(dao.sections(existing.id))
+            if (existing != null) return@withTransactionCompat existing.toDomain(dao.sections(existing.id))
             db.songDao().get(songId) ?: throw DomainException(DataError.NotFound("Song", songId))
             val doc = LyricsDocumentEntity(ids.newId(), songId, newSync(clock.nowMillis()))
             dao.insertDocument(doc)
@@ -55,7 +55,7 @@ class LyricsRepositoryImpl @Inject constructor(
         runDomain({ DataError.Io(it.message ?: "") }) {
             val doc = ensureDocument(songId).getOrThrow()
             val now = clock.nowMillis()
-            db.withTransaction {
+            db.withTransactionCompat {
                 val current = dao.sections(doc.id).map { it.toDomain() }
                 val section = Section(ids.newId(), doc.id, tag, customLabel, null, "", current.size, com.songpad.core.model.sync.SyncMeta.create(now))
                 val reordered = SectionOrdering.renumber(SectionOrdering.insert(current, section, atIndex ?: current.size))
@@ -75,7 +75,7 @@ class LyricsRepositoryImpl @Inject constructor(
 
     override suspend fun deleteSection(sectionId: String): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
         val now = clock.nowMillis()
-        db.withTransaction {
+        db.withTransactionCompat {
             val s = dao.section(sectionId) ?: throw DomainException(DataError.NotFound("Section", sectionId))
             dao.updateSection(s.copy(sync = s.sync.softDeleted(now)))
             val remaining = dao.sections(s.documentId).map { it.toDomain() }
@@ -84,7 +84,7 @@ class LyricsRepositoryImpl @Inject constructor(
     }
 
     private suspend fun reorder(sectionId: String, f: (List<Section>) -> List<Section>): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
-        db.withTransaction {
+        db.withTransactionCompat {
             val s = dao.section(sectionId) ?: throw DomainException(DataError.NotFound("Section", sectionId))
             val current = dao.sections(s.documentId).map { it.toDomain() }
             dao.updateSections(SectionOrdering.renumber(f(current)).map { it.toEntity() })

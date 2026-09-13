@@ -16,6 +16,9 @@ hs_err_pid*
 build/
 */build/
 */*/build/
+bin/
+*/bin/
+*/*/bin/
 
 # Android Studio and IntelliJ IDEA
 .idea/

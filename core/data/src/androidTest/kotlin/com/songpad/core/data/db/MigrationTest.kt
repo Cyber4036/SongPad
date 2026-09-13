@@ -22,24 +22,28 @@ import java.io.File
 @RunWith(AndroidJUnit4::class)
 class MigrationTest {
     private val dbName = "migration-test.db"
+    private val dbFile: File
+        get() = InstrumentationRegistry.getInstrumentation().targetContext.getDatabasePath(dbName)
 
     @get:Rule
     val helper = MigrationTestHelper(
-        InstrumentationRegistry.getInstrumentation(),
-        SongPadDatabase::class.java,
-        emptyList(),
-        BundledSQLiteDriver(),
+        instrumentation = InstrumentationRegistry.getInstrumentation(),
+        file = InstrumentationRegistry.getInstrumentation().targetContext.getDatabasePath(dbName),
+        driver = BundledSQLiteDriver(),
+        databaseClass = SongPadDatabase::class,
     )
 
     @Test
     fun v1_baseline_opens_and_validates_with_all_migrations_applied() {
-        val db: File = InstrumentationRegistry.getInstrumentation().targetContext.getDatabasePath(dbName)
-        db.delete()
-        helper.createDatabase(dbName, SongPadDatabase.VERSION).use { connection ->
+        dbFile.delete()
+        helper.createDatabase(SongPadDatabase.VERSION).use { connection ->
             SearchIndexDdl.allStatements.forEach(connection::execSQL)
             connection.execSQL("INSERT INTO song(id, name, status, is_favorite, created_at, updated_at, deleted, deleted_at, sync_state, revision) VALUES ('s1', 'Seed', 'ONGOING', 0, 1, 1, 0, NULL, 'LOCAL_ONLY', 1)")
         }
-        val migrated: SQLiteConnection = helper.runMigrationsAndValidate(dbName, SongPadDatabase.VERSION, true, *Migrations.ALL)
+        val migrated: SQLiteConnection = helper.runMigrationsAndValidate(
+            version = SongPadDatabase.VERSION,
+            migrations = Migrations.ALL.toList(),
+        )
         migrated.prepare("SELECT COUNT(*) FROM search_index WHERE entity_id = 's1'").use { stmt ->
             assertThat(stmt.step()).isTrue()
             assertThat(stmt.getLong(0)).isEqualTo(1)

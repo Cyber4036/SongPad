@@ -1,6 +1,6 @@
 package com.songpad.core.data.repo
 
-import androidx.room.withTransaction
+import com.songpad.core.data.db.withTransactionCompat
 import com.songpad.core.data.db.SongPadDatabase
 import com.songpad.core.data.db.entity.AudioAssetEntity
 import com.songpad.core.data.db.entity.MidiAssetEntity
@@ -56,7 +56,7 @@ class TakeRepositoryImpl @Inject constructor(
     /** §16 / Prompt 2-B: Song + Take + AudioAsset (+ MidiAsset) as ONE transaction, status = TRANSCODING. */
     override suspend fun commit(draft: TakeDraft): Result<Take> = runDomain({ DataError.Io(it.message ?: "commit failed") }) {
         val now = clock.nowMillis()
-        db.withTransaction {
+        db.withTransactionCompat {
             var songId = draft.songId
             if (draft.newSongName != null) {
                 val song = SongEntity(ids.newId(), draft.newSongName!!, SongStatus.ONGOING.name, 0, newSync(now))
@@ -115,7 +115,7 @@ class TakeRepositoryImpl @Inject constructor(
     override suspend fun markTranscoded(takeId: String, storedRelativePath: String, mimeType: String, byteSize: Long): Result<Unit> =
         runDomain({ DataError.Io(it.message ?: "") }) {
             val now = clock.nowMillis()
-            db.withTransaction {
+            db.withTransactionCompat {
                 val t = takes.get(takeId) ?: throw com.songpad.core.model.error.DomainException(DataError.NotFound("Take", takeId))
                 takes.update(t.copy(status = TakeStatus.READY.name, sync = t.sync.touched(now)))
                 audio.forTake(takeId)?.let { audio.update(it.copy(relativePath = storedRelativePath, mimeType = mimeType, byteSize = byteSize, sync = it.sync.touched(now))) }
@@ -130,7 +130,7 @@ class TakeRepositoryImpl @Inject constructor(
         if (!files.commitPcm(orphan.takeId)) throw com.songpad.core.model.error.DomainException(DataError.Io("Could not commit the recovered audio file."))
         val pcm = files.file(TakePaths.pcm(orphan.takeId))
         val now = clock.nowMillis()
-        db.withTransaction {
+        db.withTransactionCompat {
             val existing = takes.getIncludingDeleted(orphan.takeId)
             val frames = AudioFormat.framesForBytes(pcm.length())
             val audioEntity = audio.forTake(orphan.takeId)?.copy(relativePath = TakePaths.pcm(orphan.takeId), byteSize = pcm.length(), mimeType = AudioFormat.MIME_RAW_PCM, sync = newSync(now))
@@ -144,7 +144,7 @@ class TakeRepositoryImpl @Inject constructor(
     }
 
     override suspend fun hardDeleteOrphan(takeId: String): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
-        db.withTransaction { takes.hardDelete(takeId) }
+        db.withTransactionCompat { takes.hardDelete(takeId) }
         files.deleteTakeFiles(takeId)
         Unit
     }

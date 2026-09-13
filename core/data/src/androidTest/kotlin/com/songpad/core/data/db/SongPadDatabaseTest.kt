@@ -93,4 +93,21 @@ class SongPadDatabaseTest {
         assertThat(db.takeDao().unassigned()).hasSize(1)
         assertThat(search("loo").single().song_id).isNull()
     }
+
+    @Test
+    fun transaction_compat_executes_atomically_and_rolls_back_on_error() = runTest {
+        val songId = ids.next()
+        db.withTransactionCompat {
+            db.songDao().insert(SongEntity(songId, "Tx Song", "ONGOING", 0, sync()))
+        }
+        assertThat(db.songDao().get(songId)).isNotNull()
+
+        runCatching {
+            db.withTransactionCompat {
+                db.songDao().insert(SongEntity(ids.next(), "Rollback Song", "ONGOING", 0, sync()))
+                throw IllegalStateException("forced rollback")
+            }
+        }
+        assertThat(search("Rollback")).isEmpty()
+    }
 }

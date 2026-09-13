@@ -1,6 +1,6 @@
 package com.songpad.core.data.repo
 
-import androidx.room.withTransaction
+import com.songpad.core.data.db.withTransactionCompat
 import com.songpad.core.data.db.SongPadDatabase
 import com.songpad.core.data.db.entity.SongEntity
 import com.songpad.core.model.data.SongRepository
@@ -54,7 +54,7 @@ class SongRepositoryImpl @Inject constructor(
     /** Phase 0 §24.3: lightweight creation; adopting a loose take happens in the same transaction. */
     override suspend fun create(name: String, adoptTakeId: String?): Result<Song> = runDomain({ DataError.Io(it.message ?: "") }) {
         val now = clock.nowMillis()
-        db.withTransaction {
+        db.withTransactionCompat {
             val song = SongEntity(ids.newId(), name.trim(), SongStatus.ONGOING.name, 0, newSync(now))
             songs.insert(song)
             if (adoptTakeId != null) {
