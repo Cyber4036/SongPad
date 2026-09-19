@@ -9,7 +9,7 @@ Touch-to-tone latency is the whole product for the piano; only native audio with
 
 ## Decision
 
-An Oboe output stream driving a C++ polyphonic sampler with mono samples and 3–4 velocity layers (~15–25 MB of assets). NOT STARTED: the delegation prompt gates all sampler work on spikes S-2 (latency) and S-3 (alignment) returning go verdicts. `PianoCaptureGate.ENABLED = false` keeps the Piano pills disabled until then.
+An Oboe output stream driving a C++ polyphonic sampler with mono samples and 3–4 velocity layers (~15–25 MB of assets). Gated on spikes S-2 (latency) and S-3 (alignment) returning go verdicts — both PASSED on the Galaxy A02 (docs/spikes/S-2.md, docs/spikes/S-3.md, 2026-09-20). Built: `piano_engine.{h,cpp}` (32-voice pool, oldest-then-quietest stealing, pitch-shift resampling, looped sustain, unit-tested on the host under ASan/UBSan in `core/audio/src/test/cpp/piano_engine_test.cpp`), `piano_oboe_stream.{h,cpp}` (the Oboe output stream), `piano_jni.cpp`, and the Kotlin `PianoSamplerEngine` contract/impl in `core:model`/`core:audio`. See ADR-0033 for the asset-sourcing deviations (velocity layer count, PCM vs. compressed shipping, key range) this required.
 
 ## Rejected alternatives
 
@@ -17,7 +17,7 @@ An Oboe output stream driving a C++ polyphonic sampler with mono samples and 3�
 
 ## Consequences
 
-The MIDI capture path (`MidiCaptureEngineImpl`, `events.log`, SMF writer) is complete and JVM-tested so the keyboard can plug in without touching the data model.
+The MIDI capture path (`MidiCaptureEngineImpl`, `events.log`, SMF writer) is complete and JVM-tested so the keyboard can plug in without touching the data model. `PianoKeyboard` (feature:capture) is the Canvas keyboard §8.2 calls for, replacing the temporary `PianoTapPad` (`ToneGenerator`) stub.
 
 ## References
 

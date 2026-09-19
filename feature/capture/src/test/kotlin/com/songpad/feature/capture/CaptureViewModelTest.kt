@@ -4,6 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import com.songpad.core.audio.recovery.AudioRecoveryManager
 import com.songpad.core.data.testing.FakeAudioRecorderEngine
 import com.songpad.core.data.testing.FakeMidiCaptureEngine
+import com.songpad.core.data.testing.FakePianoSamplerEngine
 import com.songpad.core.data.testing.FakePlaybackController
 import com.songpad.core.data.testing.FakeSettingsRepository
 import com.songpad.core.data.testing.FakeSongRepository
@@ -40,6 +41,7 @@ class CaptureViewModelTest {
     private val engine = FakeAudioRecorderEngine()
     private val playback = FakePlaybackController()
     private val midi = FakeMidiCaptureEngine()
+    private val piano = FakePianoSamplerEngine()
     private val settings = FakeSettingsRepository()
     private val takes = FakeTakeRepository(store)
     private val songs = FakeSongRepository(store)
@@ -55,7 +57,7 @@ class CaptureViewModelTest {
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         vm = CaptureViewModel.create(
-            engine, playback, midi, MidiTakeBinder { bound += it }, settings,
+            engine, playback, midi, MidiTakeBinder { bound += it }, piano, settings,
             StartRecordingUseCase(engine, settings, store.ids, store.clock, storage),
             FinalizeTakeUseCase(engine, midi, takes, settings, transcodes),
             DiscardRecordingUseCase(engine, midi),
@@ -169,10 +171,42 @@ class CaptureViewModelTest {
     }
 
     @Test
-    fun `piano types are gated until the spikes return`() = runVm {
+    fun `selecting voice plus piano changes the ready state's type`() = runVm {
         granted()
         vm.dispatch(CaptureIntent.SelectType(TakeType.VOICE_PIANO)); dispatcher.scheduler.advanceUntilIdle()
-        assertThat((vm.state.value as CaptureState.Ready).type).isEqualTo(if (PianoCaptureGate.ENABLED) TakeType.VOICE_PIANO else TakeType.VOICE)
+        assertThat((vm.state.value as CaptureState.Ready).type).isEqualTo(TakeType.VOICE_PIANO)
+    }
+
+    @Test
+    fun `piano sampler arms only while a piano take is recording, and forwards key events`() = runVm {
+        assertThat(piano.loadAsyncCallCount).isEqualTo(1)  // §8.1: loading starts at screen-open, not the toggle
+
+        granted()
+        vm.dispatch(CaptureIntent.SelectType(TakeType.VOICE_PIANO)); dispatcher.scheduler.advanceUntilIdle()
+        vm.dispatch(CaptureIntent.Start); dispatcher.scheduler.advanceUntilIdle()
+        // The engine.state collector can bounce the derived state through Recording more than once
+        // during Start (e.g. an intermediate EngineChanged reduce); arm() is idempotent on the native
+        // side (PianoOutputStream::open()/start() no-op if already open/started), so >=1 is the real
+        // contract, not exactly 1.
+        assertThat(piano.armCallCount).isAtLeast(1)
+
+        vm.dispatch(CaptureIntent.KeyDown(note = 64, velocity = 90, eventTimeNanos = 1L)); dispatcher.scheduler.advanceUntilIdle()
+        vm.dispatch(CaptureIntent.KeyUp(note = 64, eventTimeNanos = 2L)); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(piano.noteOnCalls).containsExactly(64 to 90)
+        assertThat(piano.noteOffCalls).containsExactly(64)
+        assertThat(midi.events).hasSize(2)  // both the sampler and the MIDI sidecar hear the same key event
+
+        vm.dispatch(CaptureIntent.Pause); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(piano.disarmCallCount).isAtLeast(1)  // same idempotent-call caveat as arm() above
+    }
+
+    @Test
+    fun `a voice-only take never touches the piano sampler`() = runVm {
+        granted()
+        vm.dispatch(CaptureIntent.Start); dispatcher.scheduler.advanceUntilIdle()
+        vm.dispatch(CaptureIntent.KeyDown(note = 60, velocity = 100, eventTimeNanos = 1L)); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(piano.armCallCount).isEqualTo(0)
+        assertThat(piano.noteOnCalls).isEmpty()
     }
 
     @Test

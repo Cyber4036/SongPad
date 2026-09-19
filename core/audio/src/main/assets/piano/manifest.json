@@ -1,0 +1,290 @@
+{
+  "regions": [
+    {
+      "file": "C1vH.pcm",
+      "lokey": 21,
+      "hikey": 26,
+      "rootNote": 24,
+      "sampleRate": 48000,
+      "totalFrames": 462230,
+      "looped": true,
+      "loopStartFrame": 333473,
+      "loopEndFrame": 462212
+    },
+    {
+      "file": "F#1vH.pcm",
+      "lokey": 27,
+      "hikey": 32,
+      "rootNote": 30,
+      "sampleRate": 48000,
+      "totalFrames": 382664,
+      "looped": true,
+      "loopStartFrame": 261992,
+      "loopEndFrame": 382646
+    },
+    {
+      "file": "B1vH.pcm",
+      "lokey": 33,
+      "hikey": 36,
+      "rootNote": 35,
+      "sampleRate": 48000,
+      "totalFrames": 399400,
+      "looped": true,
+      "loopStartFrame": 279156,
+      "loopEndFrame": 399382
+    },
+    {
+      "file": "D#2vH.pcm",
+      "lokey": 37,
+      "hikey": 40,
+      "rootNote": 39,
+      "sampleRate": 48000,
+      "totalFrames": 433695,
+      "looped": true,
+      "loopStartFrame": 313653,
+      "loopEndFrame": 433677
+    },
+    {
+      "file": "F#2vH.pcm",
+      "lokey": 41,
+      "hikey": 44,
+      "rootNote": 42,
+      "sampleRate": 48000,
+      "totalFrames": 428329,
+      "looped": true,
+      "loopStartFrame": 272366,
+      "loopEndFrame": 428311
+    },
+    {
+      "file": "B2vH.pcm",
+      "lokey": 45,
+      "hikey": 48,
+      "rootNote": 47,
+      "sampleRate": 48000,
+      "totalFrames": 371498,
+      "looped": true,
+      "loopStartFrame": 260071,
+      "loopEndFrame": 371480
+    },
+    {
+      "file": "D#3vH.pcm",
+      "lokey": 49,
+      "hikey": 52,
+      "rootNote": 51,
+      "sampleRate": 48000,
+      "totalFrames": 261584,
+      "looped": true,
+      "loopStartFrame": 177400,
+      "loopEndFrame": 261566
+    },
+    {
+      "file": "F#3vH.pcm",
+      "lokey": 53,
+      "hikey": 55,
+      "rootNote": 54,
+      "sampleRate": 48000,
+      "totalFrames": 289143,
+      "looped": true,
+      "loopStartFrame": 211530,
+      "loopEndFrame": 289125
+    },
+    {
+      "file": "A3vH.pcm",
+      "lokey": 56,
+      "hikey": 58,
+      "rootNote": 57,
+      "sampleRate": 48000,
+      "totalFrames": 203339,
+      "looped": true,
+      "loopStartFrame": 131351,
+      "loopEndFrame": 203321
+    },
+    {
+      "file": "C4vH.pcm",
+      "lokey": 59,
+      "hikey": 61,
+      "rootNote": 60,
+      "sampleRate": 48000,
+      "totalFrames": 232267,
+      "looped": true,
+      "loopStartFrame": 158832,
+      "loopEndFrame": 232249
+    },
+    {
+      "file": "D#4vH.pcm",
+      "lokey": 62,
+      "hikey": 64,
+      "rootNote": 63,
+      "sampleRate": 48000,
+      "totalFrames": 236858,
+      "looped": true,
+      "loopStartFrame": 165329,
+      "loopEndFrame": 236840
+    },
+    {
+      "file": "F#4vH.pcm",
+      "lokey": 65,
+      "hikey": 67,
+      "rootNote": 66,
+      "sampleRate": 48000,
+      "totalFrames": 201738,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "A4vH.pcm",
+      "lokey": 68,
+      "hikey": 70,
+      "rootNote": 69,
+      "sampleRate": 48000,
+      "totalFrames": 142048,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "C5vH.pcm",
+      "lokey": 71,
+      "hikey": 73,
+      "rootNote": 72,
+      "sampleRate": 48000,
+      "totalFrames": 166575,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "D#5vH.pcm",
+      "lokey": 74,
+      "hikey": 76,
+      "rootNote": 75,
+      "sampleRate": 48000,
+      "totalFrames": 151565,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "F#5vH.pcm",
+      "lokey": 77,
+      "hikey": 79,
+      "rootNote": 78,
+      "sampleRate": 48000,
+      "totalFrames": 94400,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "A5vH.pcm",
+      "lokey": 80,
+      "hikey": 82,
+      "rootNote": 81,
+      "sampleRate": 48000,
+      "totalFrames": 136282,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "C6vH.pcm",
+      "lokey": 83,
+      "hikey": 85,
+      "rootNote": 84,
+      "sampleRate": 48000,
+      "totalFrames": 106091,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "D#6vH.pcm",
+      "lokey": 86,
+      "hikey": 88,
+      "rootNote": 87,
+      "sampleRate": 48000,
+      "totalFrames": 88135,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "F#6vH.pcm",
+      "lokey": 89,
+      "hikey": 91,
+      "rootNote": 90,
+      "sampleRate": 48000,
+      "totalFrames": 60267,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "A6vH.pcm",
+      "lokey": 92,
+      "hikey": 94,
+      "rootNote": 93,
+      "sampleRate": 48000,
+      "totalFrames": 60080,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "C7vH.pcm",
+      "lokey": 95,
+      "hikey": 97,
+      "rootNote": 96,
+      "sampleRate": 48000,
+      "totalFrames": 85978,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "D#7vH.pcm",
+      "lokey": 98,
+      "hikey": 100,
+      "rootNote": 99,
+      "sampleRate": 48000,
+      "totalFrames": 33987,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "F#7vH.pcm",
+      "lokey": 101,
+      "hikey": 103,
+      "rootNote": 102,
+      "sampleRate": 48000,
+      "totalFrames": 32077,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "A7vH.pcm",
+      "lokey": 104,
+      "hikey": 105,
+      "rootNote": 105,
+      "sampleRate": 48000,
+      "totalFrames": 43584,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    },
+    {
+      "file": "B7vH.pcm",
+      "lokey": 106,
+      "hikey": 108,
+      "rootNote": 107,
+      "sampleRate": 48000,
+      "totalFrames": 40063,
+      "looped": false,
+      "loopStartFrame": 0,
+      "loopEndFrame": 0
+    }
+  ]
+}

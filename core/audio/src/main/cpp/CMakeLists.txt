@@ -11,6 +11,11 @@ add_library(songpad_audio SHARED
     capture_engine.h
     capture_engine.cpp
     jni_bridge.cpp
+    piano_engine.h
+    piano_engine.cpp
+    piano_oboe_stream.h
+    piano_oboe_stream.cpp
+    piano_jni.cpp
 )
 
 target_compile_options(songpad_audio PRIVATE -Wall -Wextra -Werror=return-type -O2)

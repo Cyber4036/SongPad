@@ -43,6 +43,10 @@ sealed interface ExportError : DomainError {
     data object Cancelled : ExportError { override val message = "Export cancelled." }
 }
 
+sealed interface PianoError : DomainError {
+    data class StreamOpenFailed(val detail: String) : PianoError { override val message = "Could not start the piano sound: $detail" }
+}
+
 sealed interface NudgeError : DomainError {
     data object NotificationsDisabled : NudgeError { override val message = "Notifications are turned off." }
     data class Io(val detail: String) : NudgeError { override val message = detail }

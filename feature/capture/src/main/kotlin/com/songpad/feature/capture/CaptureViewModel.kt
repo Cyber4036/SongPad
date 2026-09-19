@@ -15,6 +15,7 @@ import com.songpad.core.model.error.domainError
 import com.songpad.core.model.logging.Logger
 import com.songpad.core.model.midi.MidiCaptureEngine
 import com.songpad.core.model.mvi.MviStore
+import com.songpad.core.model.piano.PianoSamplerEngine
 import com.songpad.core.model.state.PermissionState
 import com.songpad.core.model.take.AudioFormat
 import com.songpad.core.model.take.QualityMode
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -50,6 +52,7 @@ class CaptureViewModel @Inject constructor(
     private val playback: PlaybackController,
     private val midi: MidiCaptureEngine,
     private val midiBinder: MidiTakeBinder,
+    private val piano: PianoSamplerEngine,
     private val settings: SettingsRepository,
     private val startRecording: StartRecordingUseCase,
     private val finalizeTake: FinalizeTakeUseCase,
@@ -84,6 +87,16 @@ class CaptureViewModel @Inject constructor(
     private val peakBuffer = ArrayList<Float>(6_000)
 
     init {
+        // §8.1: sample loading begins when the screen opens, never gated behind the Piano toggle.
+        piano.loadAsync()
+        // The Oboe output stream itself only needs to be armed while the mic is actually capturing
+        // it acoustically (§8.1 Phase 0 model), so drive it off every path that enters/leaves
+        // Recording rather than duplicating arm()/disarm() calls in start()/pause()/save()/discard().
+        viewModelScope.launch {
+            state.map { it.isCapturingPiano() }.distinctUntilChanged().collect { capturing ->
+                if (capturing) piano.arm() else piano.disarm()
+            }
+        }
         viewModelScope.launch { engine.state.collect { store.dispatch(CaptureIntent.EngineChanged(it)) } }
         viewModelScope.launch { playback.state.collect { store.dispatch(CaptureIntent.PlaybackChanged(it)) } }
         viewModelScope.launch {
@@ -110,11 +123,11 @@ class CaptureViewModel @Inject constructor(
 
     fun dispatch(intent: CaptureIntent) = store.dispatch(intent)
 
+    override fun onCleared() = piano.release()
+
     private suspend fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.handle(intent: CaptureIntent) {
         when (intent) {
-            is CaptureIntent.SelectType -> reduce { s ->
-                if (s is CaptureState.Ready && (intent.type == TakeType.VOICE || PianoCaptureGate.ENABLED)) s.copy(type = intent.type) else s
-            }
+            is CaptureIntent.SelectType -> reduce { s -> if (s is CaptureState.Ready) s.copy(type = intent.type) else s }
             is CaptureIntent.PermissionResult -> onPermission(intent.state)
             CaptureIntent.Start -> start()
             CaptureIntent.Pause -> pause()
@@ -127,8 +140,14 @@ class CaptureViewModel @Inject constructor(
             CaptureIntent.ConfirmDiscard -> discard()
             CaptureIntent.CancelDiscard -> reduce { s -> s.withConfirmDiscard(false) }
             CaptureIntent.Reset -> reset()
-            is CaptureIntent.KeyDown -> if (current.isCapturingPiano()) midi.onKeyDown(intent.note, intent.velocity, intent.eventTimeNanos)
-            is CaptureIntent.KeyUp -> if (current.isCapturingPiano()) midi.onKeyUp(intent.note, intent.eventTimeNanos)
+            is CaptureIntent.KeyDown -> if (current.isCapturingPiano()) {
+                midi.onKeyDown(intent.note, intent.velocity, intent.eventTimeNanos)
+                piano.noteOn(intent.note, intent.velocity)
+            }
+            is CaptureIntent.KeyUp -> if (current.isCapturingPiano()) {
+                midi.onKeyUp(intent.note, intent.eventTimeNanos)
+                piano.noteOff(intent.note)
+            }
             CaptureIntent.KeepRecovered -> keepRecovered()
             CaptureIntent.DiscardRecovered -> (recovery.state.value as? AudioRecoveryManager.RecoveryState.Prompt)?.let {
                 recovery.set(AudioRecoveryManager.RecoveryState.DiscardConfirm(it.orphans))
@@ -389,8 +408,8 @@ class CaptureViewModel @Inject constructor(
         /** Test seam: builds a store-backed instance without Hilt. */
         fun create(
             engine: AudioRecorderEngine, playback: PlaybackController, midi: MidiCaptureEngine, midiBinder: MidiTakeBinder,
-            settings: SettingsRepository, start: StartRecordingUseCase, finalize: FinalizeTakeUseCase,
+            piano: PianoSamplerEngine, settings: SettingsRepository, start: StartRecordingUseCase, finalize: FinalizeTakeUseCase,
             discard: DiscardRecordingUseCase, recover: RecoverTakeUseCase, recovery: AudioRecoveryManager, logger: Logger = Logger.Noop,
-        ) = CaptureViewModel(engine, playback, midi, midiBinder, settings, start, finalize, discard, recover, recovery, logger)
+        ) = CaptureViewModel(engine, playback, midi, midiBinder, piano, settings, start, finalize, discard, recover, recovery, logger)
     }
 }

@@ -59,6 +59,10 @@ events.log
 *.mp3
 *.mid
 
+# ...except the vendored piano sampler assets (scripts/vendor_piano_samples.sh) — a real,
+# intentional, CC0-licensed app asset, not a scratch recording.
+!/core/audio/src/main/assets/piano/*.pcm
+
 # OS generated files
 .DS_Store
 .DS_Store?

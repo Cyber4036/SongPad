@@ -36,3 +36,4 @@ One record per LOCKED row of spec §4.1 (ADR-0001…0023), plus the four Researc
 | ADR-0030 | Frozen §15 contracts live in :core:model | Accepted (deviation from spec placement, raised) |
 | ADR-0031 | TakeFileStore lives in :core:model | Accepted (placement decision, raised) |
 | ADR-0032 | Toolchain pins: AGP 8.13 / Kotlin 2.3 / compileSdk 36 and the AndroidX ceiling that implies | Accepted (engineering, revisit after Milestone 1) |
+| ADR-0033 | Piano sampler implementation choices (asset format, velocity layers, key range) | Accepted (implementation detail inside LOCKED ADR-0015, raised) |
