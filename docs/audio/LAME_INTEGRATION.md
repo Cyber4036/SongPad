@@ -5,14 +5,30 @@ export-time leaf: nothing else in the app depends on it, and the build works wit
 
 ## Vendoring
 
-1. Download the LAME 3.100 source tarball (https://lame.sourceforge.io/) and verify its checksum.
-2. Copy `libmp3lame/`, `include/`, and `mpglib/` (only the headers mpglib needs) into
-   `core/audio/src/main/cpp/lame/` so that `core/audio/src/main/cpp/lame/libmp3lame/lame.c` exists.
-3. `CMakeLists.txt` detects that file and adds the `songpad_lame` shared library target; `LameMp3Encoder.libraryLoaded`
-   becomes true at runtime and the export screen offers MP3.
+1. Run `scripts/vendor_lame.sh`. It downloads the LAME 3.100 source tarball, verifies its sha256
+   (`ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e`), and copies `libmp3lame/`,
+   `include/`, and `mpglib/` into `core/audio/src/main/cpp/lame/` so that
+   `core/audio/src/main/cpp/lame/libmp3lame/lame.c` exists. Safe to re-run.
+2. The tarball ships only `config.h.in` (autoconf generates the real `config.h` on a host build);
+   the script writes a hand-verified `config.h` for bionic/Clang instead — confirmed by compiling
+   and linking all 20 `libmp3lame/*.c` translation units + the JNI shim for every ABI. Two things
+   in it aren't obvious from upstream:
+   - `ieee754_float32_t` isn't typedef'd anywhere in the tarball (glibc's `<ieee754.h>` normally
+     supplies it; bionic has no such header) even though `util.h` declares `fast_log2()` in terms
+     of it unconditionally, so the generated `config.h` typedefs it to `float` directly.
+   - `HAVE_MPGLIB` is deliberately left **unset**. Setting it pulls `libmp3lame/mpglib_interface.c`'s
+     MP3 *decode* path (`InitMP3`/`decodeMP3`/...) into the link, which needs `mpglib/*.c` — not
+     vendored, since we only ever encode. Left unset, that file's body (guarded by one
+     `#ifdef HAVE_MPGLIB`) compiles to an empty translation unit.
+3. `CMakeLists.txt` detects `lame/libmp3lame/lame.c` and adds the `songpad_lame` shared library
+   target (the top-level `project()` call declares both `C` and `CXX` — CMake silently drops `.c`
+   sources from the generated Ninja build with no diagnostic if only `CXX` is enabled, so don't
+   drop the `C` language back off that line). `LameMp3Encoder.libraryLoaded` becomes true at
+   runtime and the export screen offers MP3.
 4. Do **not** commit the LAME sources to this repository (LGPL text and attribution are already in
-   `core/ui/licenses/`); CI fetches them in the `vendor-lame` step. Without them, `ExportError.EncoderUnavailable("MP3")`
-   is a real, tested state.
+   `core/ui/licenses/`); `/core/audio/src/main/cpp/lame/` is gitignored and `scripts/vendor_lame.sh`
+   runs as the `vendor-lame` CI step before every native build. Without it, locally,
+   `ExportError.EncoderUnavailable("MP3")` is a real, tested state.
 
 ## Build settings
 

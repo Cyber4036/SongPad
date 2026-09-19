@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.22.1)
-project("songpad_audio" LANGUAGES CXX)
+# C is needed for the vendored LAME sources (libmp3lame is pure C); without it CMake silently
+# drops .c sources from the Ninja build with no diagnostic instead of erroring.
+project("songpad_audio" LANGUAGES C CXX)
 
 # Oboe is consumed through Prefab from the com.google.oboe:oboe AAR (§4.1).
 find_package(oboe REQUIRED CONFIG)
@@ -23,7 +25,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lame/libmp3lame/lame.c")
     target_include_directories(songpad_lame PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/lame"
         "${CMAKE_CURRENT_SOURCE_DIR}/lame/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/lame/libmp3lame")
+        "${CMAKE_CURRENT_SOURCE_DIR}/lame/libmp3lame"
+        "${CMAKE_CURRENT_SOURCE_DIR}/lame/mpglib")
     target_compile_definitions(songpad_lame PRIVATE STDC_HEADERS HAVE_CONFIG_H)
     target_compile_options(songpad_lame PRIVATE -O2 -w)
     target_link_libraries(songpad_lame PRIVATE log)
