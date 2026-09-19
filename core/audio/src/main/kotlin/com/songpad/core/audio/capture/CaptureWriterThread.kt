@@ -61,8 +61,12 @@ class CaptureWriterThread(
         val now = System.nanoTime()
         if (now - lastAnchorNanos < ANCHOR_INTERVAL_NANOS) return
         lastAnchorNanos = now
-        val ts = native.timestamp() ?: return
-        clockMapping.addAnchor(ts[0], ts[1])
+        val ts = native.timestamp()
+        if (ts != null) {
+            clockMapping.addAnchor(ts[0], ts[1])
+        } else {
+            clockMapping.addAnchor(framesWritten.get(), now)
+        }
     }
 
     companion object {

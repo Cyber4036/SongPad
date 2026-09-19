@@ -84,7 +84,18 @@ TimestampAnchor CaptureEngine::timestamp() {
     if (!stream_) return a;
     int64_t frames = 0, nanos = 0;
     oboe::Result r = stream_->getTimestamp(CLOCK_MONOTONIC, &frames, &nanos);
-    if (r == oboe::Result::OK) { a.framePosition = frames; a.presentationTimeNanos = nanos; a.valid = true; }
+    if (r == oboe::Result::OK) {
+        a.framePosition = frames;
+        a.presentationTimeNanos = nanos;
+        a.valid = true;
+    } else {
+        // Fallback for budget HAL drivers (e.g. MediaTek ALSA) where input hardware timestamping is unimplemented
+        a.framePosition = framesCaptured_.load(std::memory_order_acquire);
+        timespec ts{};
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        a.presentationTimeNanos = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+        a.valid = true;
+    }
     return a;
 }
 

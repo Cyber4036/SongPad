@@ -1,5 +1,8 @@
 package com.songpad.feature.capture.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,21 +13,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.songpad.core.model.audio.InterruptionReason
@@ -137,6 +145,10 @@ fun RecordContent(
                 is CaptureState.Recording -> {
                     LiveWaveform(amplitudes, isRecording = true, Modifier.fillMaxWidth().height(Dimens.waveformHeight))
                     Elapsed(state.elapsedMs, recording = true)
+                    if (state.type != TakeType.VOICE) {
+                        Spacer(Modifier.height(Spacing.md))
+                        PianoTapPad(dispatch)
+                    }
                 }
                 is CaptureState.Paused -> {
                     SeekableWaveform(reviewPeaks, state.review.progress, { dispatch(CaptureIntent.Scrub(it)) }, Modifier.fillMaxWidth().height(Dimens.waveformHeight))
@@ -294,4 +306,68 @@ private fun interruptionCopy(reason: InterruptionReason): String = when (reason)
     InterruptionReason.BLUETOOTH_DISCONNECTED -> "Recording paused — a Bluetooth device disconnected."
     InterruptionReason.LOW_STORAGE -> "Recording paused — the device is almost out of storage."
 }
+
+@Composable
+private fun PianoTapPad(dispatch: (CaptureIntent) -> Unit) {
+    val c = SongPadTheme.colors
+    var isPressed by remember { mutableStateOf(false) }
+    val toneGen = remember {
+        try {
+            android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 100)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            try { toneGen?.release() } catch (_: Throwable) {}
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(130.dp)
+            .background(
+                if (isPressed) c.accentSoft else c.surfaceVariant,
+                RoundedCornerShape(16.dp)
+            )
+            .border(
+                2.dp,
+                if (isPressed) c.accent else c.divider,
+                RoundedCornerShape(16.dp)
+            )
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        isPressed = true
+                        val now = System.nanoTime()
+                        try {
+                            toneGen?.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 30)
+                        } catch (_: Throwable) {}
+                        dispatch(CaptureIntent.KeyDown(note = 60, velocity = 100, eventTimeNanos = now))
+                        tryAwaitRelease()
+                        isPressed = false
+                        dispatch(CaptureIntent.KeyUp(note = 60, eventTimeNanos = System.nanoTime()))
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = if (isPressed) "♪ PIANO NOTE ACTIVE" else "TAP FOR PIANO NOTE",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = if (isPressed) c.accent else c.text
+            )
+            Spacer(Modifier.height(Spacing.xs))
+            Text(
+                text = "Emits tone & captures MIDI event (S-3 alignment)",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.textSecondary
+            )
+        }
+    }
+}
+
 

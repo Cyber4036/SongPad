@@ -137,12 +137,13 @@ sealed interface RecoveryUiState {
 }
 
 /**
- * Piano capture is gated on spikes S-2 (Oboe output latency) and S-3 (touch→sound) returning go verdicts
+ * Piano capture was gated on spikes S-2 (Oboe output latency) and S-3 (touch→sound) returning go verdicts
  * (Spec §21.1; delegation prompt "do not start until S-2 and S-3 have both returned go verdicts").
- * Until then the Piano / Voice + Piano mode pills render disabled. Flip to `true` only with the verdicts recorded
- * in docs/spikes/.
+ * Both returned PASS on the Galaxy A02 (docs/spikes/S-2.md, docs/spikes/S-3.md), so the Piano / Voice + Piano
+ * mode pills are enabled. Other device tiers (Pixel, Xiaomi, second Transsion unit) are still pending and
+ * tracked separately in docs/spikes/README.md.
  */
 object PianoCaptureGate {
-    const val ENABLED = false
+    const val ENABLED = true
     const val DISABLED_REASON = "Piano arrives after the latency spikes"
 }

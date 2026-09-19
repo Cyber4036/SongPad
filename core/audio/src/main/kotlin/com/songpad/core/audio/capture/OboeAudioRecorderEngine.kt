@@ -80,6 +80,7 @@ class OboeAudioRecorderEngine @Inject constructor(
         try { pcm.open(append = false) } catch (e: java.io.IOException) { nc.close(); focus.abandon(); return domainFailure(CaptureError.Io(e.message ?: "open failed")) }
         val red = PeakReducer(onAmplitude = { _amplitudes.tryEmit(it) })
         clockMapping.reset()
+        clockMapping.addAnchor(0L, System.nanoTime())
         val t = CaptureWriterThread(nc, pcm, red, clockMapping, onSyncCadence = { onSyncCadence() }, onError = ::onWriterError)
 
         this.native = nc; this.writer = pcm; this.reducer = red; this.thread = t; this.config = config

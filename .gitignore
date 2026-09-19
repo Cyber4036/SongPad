@@ -73,3 +73,7 @@ Thumbs.db
 
 # Visual Studio Code
 .vscode/
+
+# Vendored LAME sources (LGPL 2.1) — fetched by the vendor-lame CI step / scripts/vendor_lame.sh,
+# never committed. See docs/audio/LAME_INTEGRATION.md.
+/core/audio/src/main/cpp/lame/
