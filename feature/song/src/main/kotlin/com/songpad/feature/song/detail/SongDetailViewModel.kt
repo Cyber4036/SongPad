@@ -19,7 +19,12 @@ import com.songpad.core.model.song.SongDetail
 import com.songpad.core.model.song.SongStatusTransitions
 import com.songpad.core.model.take.Take
 import com.songpad.core.model.take.TakeStatus
+import com.songpad.core.model.take.TakeType
+import com.songpad.core.model.usecase.CaptureSession
+import com.songpad.core.model.usecase.DiscardRecordingUseCase
+import com.songpad.core.model.usecase.FinalizeTakeUseCase
 import com.songpad.core.model.usecase.RenameTakeUseCase
+import com.songpad.core.model.usecase.StartRecordingUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -53,6 +58,9 @@ class SongDetailViewModel @Inject constructor(
     private val notesRepo: NoteRepository,
     private val playback: PlaybackController,
     private val renameTakeUseCase: RenameTakeUseCase,
+    private val startRecording: StartRecordingUseCase,
+    private val finalizeTake: FinalizeTakeUseCase,
+    private val discardRecording: DiscardRecordingUseCase,
     private val peaksLoader: PeaksLoader,
     private val logger: Logger,
 ) : ViewModel() {
@@ -84,12 +92,19 @@ class SongDetailViewModel @Inject constructor(
 
     private sealed interface NotesUi {
         data object Idle : NotesUi
-        data class Composing(val text: String, val editingNoteId: String?) : NotesUi
+        /** [mediaUri] set means the published state is [NotesState.MediaAttached] instead of [NotesState.Composing]. */
+        data class Composing(val text: String, val editingNoteId: String?, val mediaUri: String? = null) : NotesUi
+        /** Only entered for a *new* note — attaching audio to a note already being edited isn't supported because
+         * [NoteRepository.update] is bodyText-only (§15 frozen contract); the UI hides attach/voice while editing. */
+        data class Recording(val text: String, val session: CaptureSession) : NotesUi
         data class Invalid(val text: String) : NotesUi
         data object Saved : NotesUi
     }
 
+    /** `stateIn`, not a plain cold flow: [resolveMentions] needs a synchronous last-known read, not a fresh
+     * re-subscribe-and-query per note save. */
     private val detail = songId.filterNotNull().flatMapLatest { songs.observeSong(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val state: StateFlow<SongDetailState> = combine(
         combine(detail, tab, takeFilter, playback.state, peaksVersion) { d, t, f, p, _ -> Quad(d, t, f, p) },
@@ -184,17 +199,85 @@ class SongDetailViewModel @Inject constructor(
     fun deleteSection(sectionId: String) = viewModelScope.launch { lyricsRepo.deleteSection(sectionId).report(); closeDialog() }
 
     // ── Notes (Phase 0 §10) ──
+    /** Begins composing (blank) or editing (existing text) a note. Resets any attached media/recording. */
     fun composeNote(text: String, editingNoteId: String? = null) { notesUi.value = NotesUi.Composing(text, editingNoteId) }
+    /** Text-field edits while composing/recording, preserving whatever else is attached. */
+    fun updateDraftText(text: String) {
+        notesUi.value = when (val ui = notesUi.value) {
+            is NotesUi.Composing -> ui.copy(text = text)
+            is NotesUi.Recording -> ui.copy(text = text)
+            is NotesUi.Invalid, NotesUi.Idle, NotesUi.Saved -> NotesUi.Composing(text, null)
+        }
+    }
     fun cancelNote() { notesUi.value = NotesUi.Idle }
-    fun saveNote() = viewModelScope.launch {
+
+    /** Phase 0 §10 "+" action — photo picker only (no camera permission, per §13). New notes only. */
+    fun attachMedia(uri: String) {
+        val ui = notesUi.value as? NotesUi.Composing ?: return
+        if (ui.editingNoteId != null) return
+        notesUi.value = ui.copy(mediaUri = uri)
+    }
+    fun removeMedia() { (notesUi.value as? NotesUi.Composing)?.let { notesUi.value = it.copy(mediaUri = null) } }
+
+    /** Phase 0 §10 "microphone action". New notes only — reuses the same capture use cases as the main
+     * Record flow (§16), since a voice note is just a VOICE-type Take referenced by [Note.voiceTakeId]. */
+    fun beginVoiceNote() = viewModelScope.launch {
         val id = songId.value ?: return@launch
         val ui = notesUi.value as? NotesUi.Composing ?: return@launch
-        val draft = NoteDraft(songId = id, bodyText = ui.text.trim())
-        NoteValidation.validate(draft)?.let { notesUi.value = NotesUi.Invalid(ui.text); return@launch }
-        val result = if (ui.editingNoteId != null) notesRepo.update(ui.editingNoteId, draft.bodyText).map { } else notesRepo.create(draft).map { }
-        result.report().onSuccess { notesUi.value = NotesUi.Saved }
+        if (ui.editingNoteId != null) return@launch
+        startRecording(TakeType.VOICE, id).report().onSuccess { session -> notesUi.value = NotesUi.Recording(ui.text, session) }
+    }
+    fun cancelVoiceNote() = viewModelScope.launch {
+        val ui = notesUi.value as? NotesUi.Recording ?: return@launch
+        discardRecording().report()
+        notesUi.value = NotesUi.Composing(ui.text, null)
+    }
+    /** Stopping IS sending, chat-message style — there is no separate "voice attached, not yet saved" state
+     * in §17's Notes hierarchy, so the recorded take commits straight into a saved Note. */
+    fun stopVoiceNote() = viewModelScope.launch {
+        val ui = notesUi.value as? NotesUi.Recording ?: return@launch
+        finalizeTake(ui.session, "Voice note", null).report().onSuccess { take -> createNote(ui.text, mediaUri = null, voiceTakeId = take.id) }
+    }
+
+    /** New note vs. editing an existing one are genuinely different operations, not the same call with some
+     * fields zeroed out: [NoteRepository.update] is bodyText-only (§15 frozen contract), so there is no way to
+     * carry mediaUri/voiceTakeId/refs through an edit — keeping them as separate functions makes that a type-level
+     * fact instead of a value silently dropped on one branch. */
+    fun saveNote() = viewModelScope.launch {
+        val ui = notesUi.value as? NotesUi.Composing ?: return@launch
+        val editingId = ui.editingNoteId
+        if (editingId != null) updateNoteText(editingId, ui.text) else createNote(ui.text, ui.mediaUri, voiceTakeId = null)
     }
     fun deleteNote(noteId: String) = viewModelScope.launch { notesRepo.softDelete(noteId).report(); closeDialog() }
+
+    private suspend fun createNote(text: String, mediaUri: String?, voiceTakeId: String?) {
+        val id = songId.value ?: return
+        val (sectionRefId, takeRefId) = resolveMentions(text)
+        val draft = NoteDraft(songId = id, bodyText = text.trim(), voiceTakeId = voiceTakeId, mediaUri = mediaUri, sectionRefId = sectionRefId, takeRefId = takeRefId)
+        NoteValidation.validate(draft)?.let { notesUi.value = NotesUi.Invalid(text); return }
+        notesRepo.create(draft).report().onSuccess { notesUi.value = NotesUi.Saved }
+    }
+
+    /** No local pre-check here (unlike [createNote]): the repo validates against the *existing* note's own
+     * voiceTakeId/mediaUri, which this function doesn't have — asking it to re-derive them would just be
+     * `notesRepo.get` for no reason when the repo already does the right check on the real row. */
+    private suspend fun updateNoteText(noteId: String, text: String) {
+        notesRepo.update(noteId, text.trim()).report()
+            .onSuccess { notesUi.value = NotesUi.Saved }
+            .onFailure { notesUi.value = NotesUi.Invalid(text) }
+    }
+
+    /** First `@` mention that names a real Section wins the section ref; first that names a real Take wins the
+     * take ref (independently — a note can reference one of each). Match is case-insensitive against
+     * [Section.displayLabel] / [Take.name]; an unmatched mention is left as plain text, not an error — the
+     * composer doesn't guess what the user meant. */
+    private fun resolveMentions(text: String): Pair<String?, String?> {
+        val d = detail.value ?: return null to null
+        val tokens = NoteValidation.mentions(text)
+        val sectionId = tokens.firstNotNullOfOrNull { token -> d.lyrics?.sections?.firstOrNull { it.displayLabel.equals(token, ignoreCase = true) } }?.id
+        val takeId = tokens.firstNotNullOfOrNull { token -> d.takes.firstOrNull { it.name.equals(token, ignoreCase = true) } }?.id
+        return sectionId to takeId
+    }
 
     // ── internals ──
 
@@ -219,7 +302,9 @@ class SongDetailViewModel @Inject constructor(
             }
         }
         val notesState: NotesState = when (nu) {
-            is NotesUi.Composing -> NotesState.Composing(d.notes, nu.text, nu.editingNoteId)
+            is NotesUi.Composing -> if (nu.mediaUri != null) NotesState.MediaAttached(d.notes, nu.text, nu.mediaUri)
+                else NotesState.Composing(d.notes, nu.text, nu.editingNoteId)
+            is NotesUi.Recording -> NotesState.VoiceRecording(d.notes, nu.text)
             is NotesUi.Invalid -> NotesState.InvalidEmpty(d.notes, nu.text)
             NotesUi.Saved -> NotesState.Saved(d.notes)
             NotesUi.Idle -> if (d.notes.isEmpty()) NotesState.Empty() else NotesState.Saved(d.notes)

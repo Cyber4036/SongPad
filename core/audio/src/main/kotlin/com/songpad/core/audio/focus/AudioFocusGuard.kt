@@ -19,6 +19,13 @@ import javax.inject.Singleton
  * §7.4 audio focus + route changes. Ducking requests are IGNORED (a recording is never gated by a
  * notification ping). `startBluetoothSco()` is deprecated and not used; route changes come from
  * `AudioDeviceCallback` and `ACTION_AUDIO_BECOMING_NOISY`.
+ *
+ * §7.4's table has no "Bluetooth connect" row and no separate telephony row — both deliberate,
+ * not gaps: telephony is covered by the existing `AUDIOFOCUS_LOSS_TRANSIENT` case (the "Incoming
+ * call / VoIP" row maps to it directly), and a Bluetooth device connecting mid-recording requires
+ * no engine action because this stream is never migrated onto a newly available device — we never
+ * call `setPreferredDevice`/SCO, so an already-open input stays put until the OS forces it away
+ * (`onAudioDevicesRemoved`, handled below). Only removal needs a handler.
  */
 @Singleton
 class AudioFocusGuard @Inject constructor(@ApplicationContext private val context: Context) {

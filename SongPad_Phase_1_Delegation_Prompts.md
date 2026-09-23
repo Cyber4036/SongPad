@@ -335,10 +335,16 @@ Test these cross-feature journeys specifically — this is where architectural i
 
 ```
 Library → Capture → Voice → Record → Pause → Resume → Save → Song → Take → Playback
-Song → Lyrics → Chorus → quick capture → Voice → Save → auto-associated with Chorus
 Song → Piano → Piano+Voice → Record → Save → ONE Take → Playback
 Search → Lyric/Take/Note → open original context
+Nudge → deep link → target Song/Take
 ```
+
+The Wave 4 journey list previously included a Section→Take "quick capture from Lyrics"
+journey (`Song → Lyrics → quick capture → Voice → Save → Song Take → Playback`). That
+journey requires a Section-to-Take reference, which §22 of the spec explicitly defers to
+V2, and `Take` is a frozen §15 contract — this file disagreed with the spec and, per this
+file's own precedence rule, was wrong. See ADR-0034. Dropped, not built.
 
 **Gate M3 (Week 10):** every Phase 0 V1 feature reachable; all §17 states implemented.
 

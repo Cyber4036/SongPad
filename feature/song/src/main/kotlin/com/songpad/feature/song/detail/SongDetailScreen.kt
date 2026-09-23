@@ -1,5 +1,13 @@
 package com.songpad.feature.song.detail
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,13 +18,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
@@ -25,6 +37,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Tab
@@ -34,11 +47,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.songpad.core.model.lyrics.Section
@@ -62,12 +82,15 @@ import com.songpad.core.ui.components.TagChip
 import com.songpad.core.ui.components.TakeListItem
 import com.songpad.core.ui.components.TextInputDialog
 import com.songpad.core.ui.icons.SongPadIcons
+import com.songpad.core.ui.theme.Radii
 import com.songpad.core.ui.theme.SongPadTheme
 import com.songpad.core.ui.theme.Spacing
 import com.songpad.feature.song.library.dateLabel
 import com.songpad.feature.song.library.icon
 import com.songpad.feature.song.library.label
 import com.songpad.feature.song.library.statusBadge
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Phase 0 §15 Song Home with Lyrics / Takes / Notes tabs. */
 @Composable
@@ -268,19 +291,54 @@ private fun SectionEditor(section: Section, vm: SongDetailViewModel) {
 @Composable
 private fun NotesTab(state: NotesState, vm: SongDetailViewModel) {
     val c = SongPadTheme.colors
+    val context = LocalContext.current
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) vm.beginVoiceNote() }
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { vm.attachMedia(it.toString()) } }
+
     Column(Modifier.fillMaxSize()) {
         val draft = when (state) { is NotesState.Composing -> state.draftText; is NotesState.InvalidEmpty -> state.draftText; is NotesState.MediaAttached -> state.draftText; is NotesState.VoiceRecording -> state.draftText; else -> null }
+        // §15 NoteRepository.update is bodyText-only — attach/voice controls only ever show for a *new* note.
+        val canAttach = (state as? NotesState.Composing)?.editingNoteId == null
         if (draft != null) {
             Column(Modifier.padding(Spacing.screen)) {
+                if (state is NotesState.MediaAttached) {
+                    Box(Modifier.padding(bottom = Spacing.sm)) {
+                        NotePhotoThumbnail(state.mediaUri)
+                        IconAction(Icons.Filled.Close, "Remove photo", onClick = vm::removeMedia, modifier = Modifier.align(Alignment.TopEnd), filled = true)
+                    }
+                }
+                if (state is NotesState.VoiceRecording) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = Spacing.sm)) {
+                        Icon(SongPadIcons.Mic, null, tint = c.accent)
+                        Spacer(Modifier.width(Spacing.sm))
+                        Text("Recording voice note…", color = c.text)
+                    }
+                }
                 OutlinedTextField(
-                    value = draft, onValueChange = { vm.composeNote(it, (state as? NotesState.Composing)?.editingNoteId) },
+                    value = draft, onValueChange = vm::updateDraftText,
                     modifier = Modifier.fillMaxWidth(), placeholder = { Text("Note… use @Chorus or @Take name to reference") }, minLines = 3,
                     isError = state is NotesState.InvalidEmpty,
                     supportingText = if (state is NotesState.InvalidEmpty) ({ Text("A note needs text, a voice note, or an attachment.") }) else null,
                 )
-                Row(Modifier.padding(top = Spacing.sm), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    PrimaryButton("Save", onClick = vm::saveNote, enabled = draft.isNotBlank())
-                    SecondaryButton("Cancel", onClick = vm::cancelNote)
+                Row(Modifier.padding(top = Spacing.sm), horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
+                    if (state is NotesState.VoiceRecording) {
+                        IconAction(SongPadIcons.Stop, "Stop recording", onClick = vm::stopVoiceNote, filled = true)
+                        SecondaryButton("Cancel", onClick = vm::cancelVoiceNote)
+                    } else {
+                        PrimaryButton("Save", onClick = vm::saveNote, enabled = draft.isNotBlank() || state is NotesState.MediaAttached)
+                        SecondaryButton("Cancel", onClick = vm::cancelNote)
+                        if (canAttach) {
+                            Spacer(Modifier.weight(1f))
+                            IconAction(
+                                Icons.Filled.AddPhotoAlternate, "Attach photo",
+                                onClick = { photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            )
+                            IconAction(SongPadIcons.Mic, "Record voice note", onClick = {
+                                val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                if (granted) vm.beginVoiceNote() else micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            })
+                        }
+                    }
                 }
             }
         } else {
@@ -307,7 +365,33 @@ private fun NoteRow(note: Note, vm: SongDetailViewModel) {
             IconAction(Icons.Filled.Edit, "Edit note", onClick = { vm.composeNote(note.bodyText, note.id) })
             IconAction(Icons.Filled.Delete, "Delete note", onClick = { vm.showDialog(SongDetailDialog.ConfirmDeleteNote(note.id)) })
         }
-        Text(note.bodyText, color = c.text, style = MaterialTheme.typography.bodyMedium)
+        note.mediaUri?.let { uri -> NotePhotoThumbnail(uri, Modifier.padding(bottom = Spacing.sm)) }
+        if (note.voiceTakeId != null) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = Spacing.sm)) {
+                Icon(SongPadIcons.Mic, null, tint = c.textTertiary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(Spacing.xs))
+                Text("Voice note — play from the Takes tab", style = MaterialTheme.typography.labelSmall, color = c.textTertiary)
+            }
+        }
+        if (note.bodyText.isNotBlank()) Text(note.bodyText, color = c.text, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** Decoded off the main thread and downsampled — this is a note attachment thumbnail, not a full viewer. */
+@Composable
+private fun NotePhotoThumbnail(uriString: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, uriString) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openInputStream(android.net.Uri.parse(uriString))?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = 4 })
+                }
+            }.getOrNull()
+        }
+    }
+    Box(modifier.size(96.dp).clip(RoundedCornerShape(Radii.sm)).background(SongPadTheme.colors.surfaceVariant)) {
+        bitmap?.let { Image(it.asImageBitmap(), contentDescription = "Attached photo", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
     }
 }
 
