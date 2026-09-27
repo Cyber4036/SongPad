@@ -37,3 +37,6 @@ One record per LOCKED row of spec §4.1 (ADR-0001…0023), plus the four Researc
 | ADR-0031 | TakeFileStore lives in :core:model | Accepted (placement decision, raised) |
 | ADR-0032 | Toolchain pins: AGP 8.13 / Kotlin 2.3 / compileSdk 36 and the AndroidX ceiling that implies | Accepted (engineering, revisit after Milestone 1) |
 | ADR-0033 | Piano sampler implementation choices (asset format, velocity layers, key range) | Accepted (implementation detail inside LOCKED ADR-0015, raised) |
+| ADR-0034 | Drop the Section→Take quick-capture journey; correct the Wave 4 prompt | Accepted (spec §22 wins over prompts file) |
+| ADR-0035 | Mix the piano sampler into the capture file when the output route is headphones | Accepted (amends LOCKED §8.1, product owner decision) |
+| ADR-0036 | Beta crash reporting is Play Console Android vitals — no SDK, no network | Accepted (product owner decision) |

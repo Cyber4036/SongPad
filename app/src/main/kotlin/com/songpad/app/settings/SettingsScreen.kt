@@ -1,5 +1,6 @@
 package com.songpad.app.settings
 
+import com.songpad.app.BuildConfig
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -86,7 +87,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenNudges: () -> Unit, viewModel: Sett
             SettingRow("Formats", "Stored copy (M4A / FLAC), WAV for DAWs, MP3 where available. Takes recorded in Standard quality export from a compressed source.", onClick = null)
 
             SectionHeader("About")
-            SettingRow("SongPad", "Version 1.0.0 · Phase 1", onClick = null)
+            SettingRow("SongPad", "Version ${BuildConfig.VERSION_NAME}", onClick = null)
             SettingRow("Open source licenses", "Oboe, Media3, LAME, Figtree, Caprasimo and others", onClick = { viewModel.setShowLicenses(true) })
             SettingRow("Privacy", "Audio never leaves the device. No accounts, no analytics, no network.", onClick = null)
             Spacer(Modifier.height(Spacing.xxxl))

@@ -79,9 +79,24 @@ SongPad is structured as a modular, unidirectional data flow (UDF) Android appli
 4. **Interface Contracts**: All feature modules develop against the frozen core interfaces (§15), declared in `:core:model` (see [`docs/CONTRACTS_FROZEN.md`](docs/CONTRACTS_FROZEN.md) and ADR-0030), or against the fakes in `:core:data:testing`.
 5. **Module boundaries are enforced at configuration time**: `./gradlew checkModuleBoundaries` (also run by the CI gate) fails the build on a forbidden project dependency; only `:core:audio` may contain a CMake build.
 
-### Phase 1 status (single-developer pass, 2026-09-07)
+### Phase 1 status (single-developer pass, 2026-09-27)
 
-Built and JVM-tested: module skeleton, Room schema + FTS5 + migrations scaffold, all §15 contracts and fakes, Oboe capture engine + native ring buffer, PCM writer, Media3 playback (M4A/FLAC/raw PCM), transcode worker, recovery manager, MIDI events log + SMF writer, design tokens/components, the five feature modules, the Navigation 3 shell, Settings, ADRs and docs. **Not done and not started by design:** the piano sampler and keyboard (gated on spikes S-2/S-3), the LAME sources (vendored per `docs/audio/LAME_INTEGRATION.md`), and every physical-device spike (`docs/spikes/`). No Xiaomi/HyperOS device was available.
+Waves 0–4 are built: every Phase 0 V1 feature is reachable, and every §17 state is implemented. That includes
+the Oboe piano sampler and keyboard, and LAME MP3 export. S-1, S-2 and S-3 passed on physical devices
+(`docs/spikes/`, `docs/STAGE_1_DEVICE_VERIFICATION_REPORT.md`).
+
+The code-side work for Wave 5 (hardening) and Wave 6 (beta) is done:
+- back-navigation guards around live recordings;
+- §8.1 piano-on-headphones mix (ADR-0035);
+- debug StrictMode;
+- R8 verified against the minified build;
+- release signing wiring;
+- crash reporting via Play vitals (ADR-0036).
+
+Gates M4 and M5 are **not closed**. They need device-matrix runs, Play Console setup and testers. See
+[`docs/release/HARDENING_STATUS.md`](docs/release/HARDENING_STATUS.md) and
+[`docs/release/BETA_RELEASE.md`](docs/release/BETA_RELEASE.md). Xiaomi/HyperOS is carried into beta untested,
+by explicit decision.
 
 ---
 

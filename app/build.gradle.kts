@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -9,6 +11,14 @@ plugins {
 
 // :app — Application, Hilt root, Navigation 3 host, route keys (§5). The only module that sees every feature.
 
+// Wave 6 upload-key signing (docs/release/BETA_RELEASE.md). Read from a gitignored signing.properties at the repo
+// root, or SONGPAD_* environment variables in CI. Absent both, release builds stay unsigned — no key is ever committed.
+val signingProps = Properties().apply {
+    rootProject.file("signing.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+fun signingValue(key: String, env: String): String? = signingProps.getProperty(key) ?: System.getenv(env)
+val releaseStoreFile = signingValue("storeFile", "SONGPAD_STORE_FILE")
+
 android {
     namespace = "com.songpad.app"
     compileSdk = 36
@@ -17,13 +27,26 @@ android {
         applicationId = "com.songpad.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
+        // Beta builds bump versionCode per upload; Play rejects a reused code (docs/release/BETA_RELEASE.md).
+        versionCode = (project.findProperty("songpad.versionCode") as String?)?.toInt() ?: 1
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("upload") {
+                storeFile = rootProject.file(releaseStoreFile)
+                storePassword = signingValue("storePassword", "SONGPAD_STORE_PASSWORD")
+                keyAlias = signingValue("keyAlias", "SONGPAD_KEY_ALIAS")
+                keyPassword = signingValue("keyPassword", "SONGPAD_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseStoreFile != null) signingConfig = signingConfigs.getByName("upload")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

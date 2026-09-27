@@ -361,6 +361,14 @@ file's own precedence rule, was wrong. See ADR-0034. Dropped, not built.
 
 **Orphan cleanup gets specific attention.** It is the worst failure mode in the app, which is why it has three independent guards (§9.3): 24-hour modification-time grace window, `.tmp` presence check, active-session deferral. Prove all three. A cleanup pass that deletes a live recording is unrecoverable and unforgivable.
 
+**Xiaomi/HyperOS — resolved 2026-09-27 (product owner): carried into beta, explicitly.** No HyperOS device was
+acquired. Beta ships with HyperOS **untested**, with the known risks stated in `docs/release/HARDENING_STATUS.md`:
+aggressive background kills beyond the foreground service, nudge non-delivery, and battery-saver interaction
+with long sessions. This is a recorded decision, not a gap carried silently. Recruiting a beta tester on a
+HyperOS phone is the mitigation.
+
+Code-side status of this wave: `docs/release/HARDENING_STATUS.md`.
+
 **Gate M4 (Week 12):** available devices green (Pixel 4a, Tecno Spark 8, plus Galaxy A03 spot checks); Xiaomi/HyperOS status explicitly resolved one way or the other, not silently carried forward; migration tests pass; no leaks or ANRs under profiling; orphan cleanup proven safe.
 
 ---
@@ -377,6 +385,9 @@ The questions beta answers are qualitative:
 - Does Piano + Voice make sense?
 - **Do they ever lose a recording?**
 - Do they understand the difference between Notes and Takes?
+
+Crash reporting is Play Console Android vitals: no SDK and no network (ADR-0036). Testers must install from a
+Play testing track. Release runbook: `docs/release/BETA_RELEASE.md`.
 
 **Gate M5:** external testers are recording daily on their own devices.
 
@@ -395,6 +406,13 @@ A feature is Done when **all** of these hold:
 
 ---
 
-# Two open product questions
+# Open product questions
 
-§21.3 flags two items as **unresolved product decisions, not engineering decisions**. They are raised through the Phase 0 §26 process and settled by the product owner. If your work runs into one of them, stop and raise it — do not settle it in code, and do not let a default implementation quietly become the decision.
+Spec §21.3 flagged **three** items (not two, as this section previously said) as product decisions, not
+engineering decisions: the quality-mode disclosure, storage honesty in Settings, and recovery prompt wording and
+timing. **All three were resolved by the product owner on 2026-09-27.** The decisions are recorded in place in
+spec §21.3. Two later decisions were made the same way: §8.1 piano-on-headphones (ADR-0035) and beta crash
+reporting (ADR-0036).
+
+The standing rule is unchanged. If your work runs into an unresolved product decision, stop and raise it. Do not
+settle it in code, and do not let a default implementation quietly become the decision.
