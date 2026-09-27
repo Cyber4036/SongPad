@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
  */
 @Serializable data object LibraryKey : NavKey
 @Serializable data class RecordKey(val songId: String? = null) : NavKey
-@Serializable data class SongDetailKey(val songId: String, val tab: String = "HOME") : NavKey
+@Serializable data class SongDetailKey(val songId: String, val tab: String = "HOME", val targetId: String? = null) : NavKey
 @Serializable data class SearchKey(val songId: String? = null) : NavKey
 @Serializable data object NudgesKey : NavKey
 @Serializable data class ExportKey(val songId: String) : NavKey

@@ -59,6 +59,9 @@ class MainViewModel @Inject constructor(settings: SettingsRepository, private va
     val themeVariant: StateFlow<String?> = settings.themeVariant.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val deepLinkTargets = MutableSharedFlow<NavKey>(extraBufferCapacity = 1)
     fun onIntent(intent: Intent?) = viewModelScope.launch { deepLinks.resolve(intent?.data)?.let { deepLinkTargets.tryEmit(it) } }
+    /** In-app nudge tap on a take — same resolution as the `songpad://take/{id}` notification deep link,
+     * so both paths land on the same Song's Takes tab, scrolled to that take, instead of just Library. */
+    fun openTake(takeId: String) = viewModelScope.launch { deepLinkTargets.tryEmit(deepLinks.resolve(host = "take", id = takeId)) }
 }
 
 @AndroidEntryPoint
@@ -121,6 +124,7 @@ fun SongPadApp(viewModel: MainViewModel) {
                     entry<SongDetailKey> { key ->
                         SongDetailScreen(
                             songId = key.songId, initialTab = SongDetailTab.entries.firstOrNull { it.name == key.tab } ?: SongDetailTab.HOME,
+                            targetId = key.targetId,
                             onBack = { pop() }, onRecord = { push(RecordKey(it)) }, onExport = { push(ExportKey(it)) }, onSearchInSong = { push(SearchKey(it)) },
                         )
                     }
@@ -128,15 +132,15 @@ fun SongPadApp(viewModel: MainViewModel) {
                         SearchScreen(
                             songId = key.songId, onBack = { pop() },
                             onOpenSong = { push(SongDetailKey(it)) },
-                            onOpenLyrics = { push(SongDetailKey(it, SongDetailTab.LYRICS.name)) },
-                            onOpenNotes = { push(SongDetailKey(it, SongDetailTab.NOTES.name)) },
-                            onOpenTakes = { push(SongDetailKey(it, SongDetailTab.TAKES.name)) },
+                            onOpenLyrics = { songId, sectionId -> push(SongDetailKey(songId, SongDetailTab.LYRICS.name, sectionId)) },
+                            onOpenNotes = { songId, noteId -> push(SongDetailKey(songId, SongDetailTab.NOTES.name, noteId)) },
+                            onOpenTakes = { songId, takeId -> push(SongDetailKey(songId, SongDetailTab.TAKES.name, takeId)) },
                         )
                     }
                     entry<NudgesKey> {
                         NudgesScreen(
                             onOpenSong = { push(SongDetailKey(it)) },
-                            onOpenTake = { /* resolved by DeepLinkResolver semantics: the nudge's take lives in a song or the library */ switchTopLevel(LibraryKey) },
+                            onOpenTake = { viewModel.openTake(it) },
                             onOpenLibrary = { switchTopLevel(LibraryKey) },
                         )
                     }

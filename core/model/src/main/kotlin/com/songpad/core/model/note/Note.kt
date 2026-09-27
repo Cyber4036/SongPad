@@ -44,6 +44,9 @@ object NoteValidation {
     fun mentions(text: String): List<String> =
         MENTION.findAll(text).map { it.groupValues[1].trim() }.filter { it.isNotEmpty() }.toList()
 
+    /** Same matches as [mentions] but with character ranges, for rendering tappable spans (Wave 4 note-ref navigation). */
+    fun mentionMatches(text: String): List<MatchResult> = MENTION.findAll(text).toList()
+
     /** A mention is one word (a tag, a name) optionally followed by a number: `@Chorus`, `@Verse 2`, `@Take 3`. */
     private val MENTION = Regex("@([\\p{L}\\p{N}_-]+(?: \\d+)?)")
 }

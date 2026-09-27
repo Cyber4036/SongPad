@@ -18,4 +18,12 @@ class NoteValidationTest {
         assertThat(NoteValidation.mentions("try @Chorus louder, ref @Verse 2 and @Take 3")).containsExactly("Chorus", "Verse 2", "Take 3")
         assertThat(NoteValidation.mentions("no mentions here")).isEmpty()
     }
+
+    @Test
+    fun `mentionMatches ranges line up with the same tokens mentions returns, for tappable-span rendering`() {
+        val text = "try @Chorus louder, ref @Verse 2"
+        val matches = NoteValidation.mentionMatches(text)
+        assertThat(matches.map { it.groupValues[1].trim() }).containsExactly("Chorus", "Verse 2").inOrder()
+        assertThat(matches.map { text.substring(it.range.first, it.range.last + 1) }).containsExactly("@Chorus", "@Verse 2").inOrder()
+    }
 }

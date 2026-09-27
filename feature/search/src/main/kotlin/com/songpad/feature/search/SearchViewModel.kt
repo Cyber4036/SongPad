@@ -22,6 +22,10 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
+/** Wave 4 search filtering — narrows which of [SearchResults]'s already-separated category lists are shown.
+ * Purely a display concern: the query still fetches every category, so switching filters is instant. */
+enum class SearchFilter(val label: String) { ALL("All"), SONGS("Songs"), LYRICS("Lyrics"), NOTES("Notes"), TAKES("Takes") }
+
 /** §17 "Songs.SearchResults" — the one place search results are a state. Global or scoped to a song (§10.2). */
 sealed interface SearchState {
     val query: String
@@ -41,11 +45,15 @@ class SearchViewModel @Inject constructor(private val engine: SearchEngine) : Vi
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
 
+    private val _filter = MutableStateFlow(SearchFilter.ALL)
+    val filter: StateFlow<SearchFilter> = _filter.asStateFlow()
+
     /** Set once by the screen: null for the global search, a song id for "search in song". */
     fun bind(songId: String?) { songScope.value = songId }
 
     fun setQuery(q: String) { _query.value = q }
     fun clear() { _query.value = "" }
+    fun setFilter(f: SearchFilter) { _filter.value = f }
 
     val state: StateFlow<SearchState> = combine(_query, songScope) { q, s -> q.trim() to s }
         .distinctUntilChanged()

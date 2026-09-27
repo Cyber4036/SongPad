@@ -11,10 +11,16 @@ import javax.inject.Inject
 class DeepLinkResolver @Inject constructor(private val songs: SongRepository, private val takes: TakeRepository) {
     suspend fun resolve(uri: Uri?): NavKey? {
         if (uri == null || uri.scheme != "songpad") return null
-        val id = uri.lastPathSegment ?: return LibraryKey
-        return when (uri.host) {
-            "song" -> songs.getSong(id)?.let { SongDetailKey(it.id) } ?: LibraryKey
-            "take" -> takes.getTake(id)?.let { t -> t.songId?.let { SongDetailKey(it, SongDetailTab.TAKES.name) } } ?: LibraryKey
+        return resolve(uri.host, uri.lastPathSegment)
+    }
+
+    /** Pure-Kotlin core once the scheme is validated — no `android.net.Uri` in the signature, so this is
+     * directly JVM-unit-testable without Robolectric (matches `:core:model`'s no-Robolectric convention). */
+    internal suspend fun resolve(host: String?, id: String?): NavKey {
+        val target = id ?: return LibraryKey
+        return when (host) {
+            "song" -> songs.getSong(target)?.let { SongDetailKey(it.id) } ?: LibraryKey
+            "take" -> takes.getTake(target)?.let { t -> t.songId?.let { SongDetailKey(it, SongDetailTab.TAKES.name, t.id) } } ?: LibraryKey
             else -> LibraryKey
         }
     }

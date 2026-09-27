@@ -25,7 +25,13 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import com.songpad.core.ui.components.EmptyState
+import com.songpad.core.ui.components.FilterPill
 import com.songpad.core.ui.components.IconAction
 import com.songpad.core.ui.components.SectionHeader
 import com.songpad.core.ui.components.SongPadTopBar
@@ -39,14 +45,15 @@ fun SearchScreen(
     songId: String?,
     onBack: () -> Unit,
     onOpenSong: (songId: String) -> Unit,
-    onOpenLyrics: (songId: String) -> Unit,
-    onOpenNotes: (songId: String) -> Unit,
-    onOpenTakes: (songId: String) -> Unit,
+    onOpenLyrics: (songId: String, sectionId: String) -> Unit,
+    onOpenNotes: (songId: String, noteId: String) -> Unit,
+    onOpenTakes: (songId: String, takeId: String) -> Unit,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(songId) { viewModel.bind(songId) }
     val query by viewModel.query.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val filter by viewModel.filter.collectAsStateWithLifecycle()
     val c = SongPadTheme.colors
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
@@ -65,24 +72,29 @@ fun SearchScreen(
             is SearchState.Searching -> Text("Searching…", Modifier.padding(Spacing.screen), color = c.textSecondary)
             is SearchState.NoResults -> EmptyState(SongPadIcons.Lyrics, "No matches for \"${s.query}\"", "Try a shorter word or a different spelling.")
             is SearchState.Failed -> EmptyState(SongPadIcons.Lyrics, "Search hit a snag", s.message)
-            is SearchState.Results -> LazyColumn(Modifier.fillMaxSize()) {
+            is SearchState.Results -> Column(Modifier.fillMaxSize()) {
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = Spacing.screen, vertical = Spacing.sm)) {
+                    SearchFilter.entries.forEach { f -> FilterPill(f.label, selected = filter == f, onClick = { viewModel.setFilter(f) }); Spacer(Modifier.width(Spacing.sm)) }
+                }
                 val r = s.results
-                if (r.songs.isNotEmpty()) {
-                    item { SectionHeader("Songs") }
-                    items(r.songs, key = { "s" + it.songId }) { m -> ResultRow(m.name, SnippetHighlight.annotate(m.snippet, c.accent)) { onOpenSong(m.songId) } }
-                }
-                if (r.lyrics.isNotEmpty()) {
-                    item { SectionHeader("Lyrics") }
-                    items(r.lyrics, key = { "l" + it.sectionId }) { m -> ResultRow(m.label, SnippetHighlight.annotate(m.snippet, c.accent)) { onOpenLyrics(m.songId) } }
-                }
-                if (r.notes.isNotEmpty()) {
-                    item { SectionHeader("Notes") }
-                    items(r.notes, key = { "n" + it.noteId }) { m -> ResultRow("Note", SnippetHighlight.annotate(m.snippet, c.accent)) { onOpenNotes(m.songId) } }
-                }
-                if (r.takes.isNotEmpty()) {
-                    item { SectionHeader("Takes") }
-                    items(r.takes, key = { "t" + it.takeId }) { m ->
-                        ResultRow(m.name, SnippetHighlight.annotate(m.snippet, c.accent)) { m.songId?.let(onOpenTakes) }
+                LazyColumn(Modifier.fillMaxSize()) {
+                    if (r.songs.isNotEmpty() && (filter == SearchFilter.ALL || filter == SearchFilter.SONGS)) {
+                        item { SectionHeader("Songs") }
+                        items(r.songs, key = { "s" + it.songId }) { m -> ResultRow(m.name, SnippetHighlight.annotate(m.snippet, c.accent)) { onOpenSong(m.songId) } }
+                    }
+                    if (r.lyrics.isNotEmpty() && (filter == SearchFilter.ALL || filter == SearchFilter.LYRICS)) {
+                        item { SectionHeader("Lyrics") }
+                        items(r.lyrics, key = { "l" + it.sectionId }) { m -> ResultRow(m.label, SnippetHighlight.annotate(m.snippet, c.accent)) { onOpenLyrics(m.songId, m.sectionId) } }
+                    }
+                    if (r.notes.isNotEmpty() && (filter == SearchFilter.ALL || filter == SearchFilter.NOTES)) {
+                        item { SectionHeader("Notes") }
+                        items(r.notes, key = { "n" + it.noteId }) { m -> ResultRow("Note", SnippetHighlight.annotate(m.snippet, c.accent)) { onOpenNotes(m.songId, m.noteId) } }
+                    }
+                    if (r.takes.isNotEmpty() && (filter == SearchFilter.ALL || filter == SearchFilter.TAKES)) {
+                        item { SectionHeader("Takes") }
+                        items(r.takes, key = { "t" + it.takeId }) { m ->
+                            ResultRow(m.name, SnippetHighlight.annotate(m.snippet, c.accent)) { m.songId?.let { onOpenTakes(it, m.takeId) } }
+                        }
                     }
                 }
             }

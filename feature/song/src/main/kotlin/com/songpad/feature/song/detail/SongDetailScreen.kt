@@ -22,9 +22,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
@@ -33,6 +37,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.DropdownMenu
@@ -53,17 +59,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.songpad.core.model.lyrics.LyricsDocument
 import com.songpad.core.model.lyrics.Section
 import com.songpad.core.model.lyrics.SectionTag
 import com.songpad.core.model.note.Note
+import com.songpad.core.model.note.NoteValidation
 import com.songpad.core.model.song.SongActivity
 import com.songpad.core.model.song.SongStatusTransitions
 import com.songpad.core.model.take.Take
@@ -101,6 +113,7 @@ fun SongDetailScreen(
     onRecord: (String) -> Unit,
     onExport: (String) -> Unit,
     onSearchInSong: (String) -> Unit,
+    targetId: String? = null,
     viewModel: SongDetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(songId) { viewModel.bind(songId, initialTab) }
@@ -108,6 +121,9 @@ fun SongDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dialog by viewModel.dialog.collectAsStateWithLifecycle()
     val c = SongPadTheme.colors
+    // Landing target from search, or a @mention tap that switched tabs — consumed once the row is found and scrolled to.
+    var scrollTarget by remember(songId) { mutableStateOf(targetId) }
+    fun navigateToRef(tab: SongDetailTab, id: String) { viewModel.selectTab(tab); scrollTarget = id }
 
     when (val s = state) {
         SongDetailState.Loading -> Column(Modifier.fillMaxSize()) { SongPadTopBar(title = null, onBack = onBack) }
@@ -137,9 +153,12 @@ fun SongDetailScreen(
             Box(Modifier.weight(1f)) {
                 when (s.tab) {
                     SongDetailTab.HOME -> HomeTab(s, onRecord = { onRecord(s.song.id) }, viewModel)
-                    SongDetailTab.LYRICS -> LyricsTab(s.lyrics, viewModel)
-                    SongDetailTab.TAKES -> TakesTab(s.takes, viewModel, onRecord = { onRecord(s.song.id) })
-                    SongDetailTab.NOTES -> NotesTab(s.notes, viewModel)
+                    SongDetailTab.LYRICS -> LyricsTab(s.lyrics, viewModel, scrollTarget) { scrollTarget = null }
+                    SongDetailTab.TAKES -> TakesTab(s.takes, viewModel, onRecord = { onRecord(s.song.id) }, scrollTarget = scrollTarget, onScrolled = { scrollTarget = null })
+                    SongDetailTab.NOTES -> NotesTab(
+                        s.notes, viewModel, sections = s.lyrics.documentOrNull()?.sections.orEmpty(), takes = s.takes.takesOrEmpty(),
+                        scrollTarget = scrollTarget, onScrolled = { scrollTarget = null }, onNavigateToRef = ::navigateToRef,
+                    )
                 }
             }
             s.nowPlaying?.let { np ->
@@ -208,35 +227,54 @@ private fun TakeRow(take: Take, nowPlaying: NowPlaying?, vm: SongDetailViewModel
     )
 }
 
+private fun TakeListState.takesOrEmpty(): List<Take> = when (this) {
+    is TakeListState.Empty -> emptyList()
+    is TakeListState.Populated -> takes
+    is TakeListState.Playing -> takes
+    is TakeListState.Transcoding -> takes
+    is TakeListState.Unavailable -> takes
+}
+
 @Composable
-private fun TakesTab(state: TakeListState, vm: SongDetailViewModel, onRecord: () -> Unit) {
+private fun TakesTab(state: TakeListState, vm: SongDetailViewModel, onRecord: () -> Unit, scrollTarget: String?, onScrolled: () -> Unit) {
     val c = SongPadTheme.colors
+    val listState = rememberLazyListState()
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = Spacing.screen, vertical = Spacing.sm)) {
             TakeFilter.entries.forEach { f -> FilterPill(f.label, selected = state.filter == f, onClick = { vm.setTakeFilter(f) }); Spacer(Modifier.width(Spacing.sm)) }
         }
         when (state) {
             is TakeListState.Empty -> EmptyState(SongPadIcons.Mic, "No takes", if (state.filter == TakeFilter.ALL) "Record your first take for this song." else "No ${state.filter.label} takes yet.", actionLabel = "Record", onAction = onRecord)
-            is TakeListState.Populated -> TakeList(state.takes, null, vm)
-            is TakeListState.Playing -> TakeList(state.takes, state.playing, vm)
-            is TakeListState.Transcoding -> TakeList(state.takes, state.playing, vm)
+            is TakeListState.Populated -> TakeList(state.takes, null, vm, listState, scrollTarget, onScrolled)
+            is TakeListState.Playing -> TakeList(state.takes, state.playing, vm, listState, scrollTarget, onScrolled)
+            is TakeListState.Transcoding -> TakeList(state.takes, state.playing, vm, listState, scrollTarget, onScrolled)
             is TakeListState.Unavailable -> Column {
                 Text(state.reason, Modifier.padding(Spacing.screen), color = c.warning, style = MaterialTheme.typography.bodyMedium)
-                TakeList(state.takes, null, vm)
+                TakeList(state.takes, null, vm, listState, scrollTarget, onScrolled)
             }
         }
     }
 }
 
 @Composable
-private fun TakeList(takes: List<Take>, np: NowPlaying?, vm: SongDetailViewModel) {
-    LazyColumn(Modifier.fillMaxSize()) { items(takes, key = { it.id }) { TakeRow(it, np, vm) }; item { Spacer(Modifier.height(Spacing.xxxl)) } }
+private fun TakeList(takes: List<Take>, np: NowPlaying?, vm: SongDetailViewModel, listState: LazyListState, scrollTarget: String?, onScrolled: () -> Unit) {
+    LaunchedEffect(scrollTarget, takes) {
+        if (scrollTarget == null) return@LaunchedEffect
+        val index = takes.indexOfFirst { it.id == scrollTarget }
+        if (index >= 0) { listState.animateScrollToItem(index); onScrolled() }
+    }
+    LazyColumn(Modifier.fillMaxSize(), state = listState) { items(takes, key = { it.id }) { TakeRow(it, np, vm) }; item { Spacer(Modifier.height(Spacing.xxxl)) } }
+}
+
+private fun LyricsState.documentOrNull(): LyricsDocument? = when (this) {
+    is LyricsState.Editing -> document; is LyricsState.Autosaved -> document; is LyricsState.SectionInserting -> document; LyricsState.Empty -> null
 }
 
 @Composable
-private fun LyricsTab(state: LyricsState, vm: SongDetailViewModel) {
+private fun LyricsTab(state: LyricsState, vm: SongDetailViewModel, scrollTarget: String?, onScrolled: () -> Unit) {
     val c = SongPadTheme.colors
-    val doc = when (state) { is LyricsState.Editing -> state.document; is LyricsState.Autosaved -> state.document; is LyricsState.SectionInserting -> state.document; LyricsState.Empty -> null }
+    val doc = state.documentOrNull()
+    val listState = rememberLazyListState()
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = Spacing.screen, vertical = Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
             SecondaryButton("Add section", onClick = { vm.beginInsertSection(null) })
@@ -249,8 +287,19 @@ private fun LyricsTab(state: LyricsState, vm: SongDetailViewModel) {
         if (doc == null || doc.sections.isEmpty()) {
             EmptyState(SongPadIcons.Lyrics, "No lyrics yet", "Add a section — Verse, Chorus, Bridge — and write inside it. Sections can stay empty.", actionLabel = "Add section", onAction = { vm.beginInsertSection(null) })
         } else {
-            LazyColumn(Modifier.fillMaxSize()) {
-                items(doc.sections.sortedBy { it.sortOrder }, key = { it.id }) { section -> SectionEditor(section, vm) }
+            val sorted = doc.sections.sortedBy { it.sortOrder }
+            LaunchedEffect(scrollTarget, sorted) {
+                if (scrollTarget == null) return@LaunchedEffect
+                val index = sorted.indexOfFirst { it.id == scrollTarget }
+                if (index >= 0) { listState.animateScrollToItem(index); onScrolled() }
+            }
+            LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                itemsIndexed(sorted, key = { _, it -> it.id }) { index, section ->
+                    SectionEditor(
+                        section, vm, canMoveUp = index > 0, canMoveDown = index < sorted.lastIndex,
+                        onMoveUp = { vm.moveSection(section.id, index - 1) }, onMoveDown = { vm.moveSection(section.id, index + 1) },
+                    )
+                }
                 item { Spacer(Modifier.height(Spacing.xxxl)) }
             }
         }
@@ -271,13 +320,15 @@ private fun LyricsTab(state: LyricsState, vm: SongDetailViewModel) {
 }
 
 @Composable
-private fun SectionEditor(section: Section, vm: SongDetailViewModel) {
+private fun SectionEditor(section: Section, vm: SongDetailViewModel, canMoveUp: Boolean, canMoveDown: Boolean, onMoveUp: () -> Unit, onMoveDown: () -> Unit) {
     val c = SongPadTheme.colors
     var text by remember(section.id) { mutableStateOf(section.bodyText) }
     Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.screen, vertical = Spacing.sm)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(section.displayLabel, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), color = c.accent2)
             Spacer(Modifier.weight(1f))
+            IconAction(Icons.Filled.KeyboardArrowUp, "Move up", enabled = canMoveUp, onClick = onMoveUp)
+            IconAction(Icons.Filled.KeyboardArrowDown, "Move down", enabled = canMoveDown, onClick = onMoveDown)
             IconAction(Icons.Filled.Delete, "Delete section", onClick = { vm.showDialog(SongDetailDialog.ConfirmDeleteSection(section.id, section.displayLabel)) })
         }
         OutlinedTextField(
@@ -289,8 +340,12 @@ private fun SectionEditor(section: Section, vm: SongDetailViewModel) {
 }
 
 @Composable
-private fun NotesTab(state: NotesState, vm: SongDetailViewModel) {
+private fun NotesTab(
+    state: NotesState, vm: SongDetailViewModel, sections: List<Section>, takes: List<Take>,
+    scrollTarget: String?, onScrolled: () -> Unit, onNavigateToRef: (SongDetailTab, String) -> Unit,
+) {
     val c = SongPadTheme.colors
+    val listState = rememberLazyListState()
     val context = LocalContext.current
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) vm.beginVoiceNote() }
     val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { vm.attachMedia(it.toString()) } }
@@ -347,8 +402,13 @@ private fun NotesTab(state: NotesState, vm: SongDetailViewModel) {
         if (state.notes.isEmpty() && draft == null) {
             EmptyState(SongPadIcons.Lyrics, "No notes", "Capture a thought about this song. Reference a section or take with @.")
         } else {
-            LazyColumn(Modifier.fillMaxSize()) {
-                items(state.notes, key = { it.id }) { note -> NoteRow(note, vm) }
+            LaunchedEffect(scrollTarget, state.notes) {
+                if (scrollTarget == null) return@LaunchedEffect
+                val index = state.notes.indexOfFirst { it.id == scrollTarget }
+                if (index >= 0) { listState.animateScrollToItem(index); onScrolled() }
+            }
+            LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                items(state.notes, key = { it.id }) { note -> NoteRow(note, vm, sections, takes, onNavigateToRef) }
                 item { Spacer(Modifier.height(Spacing.xxxl)) }
             }
         }
@@ -356,7 +416,7 @@ private fun NotesTab(state: NotesState, vm: SongDetailViewModel) {
 }
 
 @Composable
-private fun NoteRow(note: Note, vm: SongDetailViewModel) {
+private fun NoteRow(note: Note, vm: SongDetailViewModel, sections: List<Section>, takes: List<Take>, onNavigateToRef: (SongDetailTab, String) -> Unit) {
     val c = SongPadTheme.colors
     Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.screen, vertical = Spacing.sm)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -373,7 +433,39 @@ private fun NoteRow(note: Note, vm: SongDetailViewModel) {
                 Text("Voice note — play from the Takes tab", style = MaterialTheme.typography.labelSmall, color = c.textTertiary)
             }
         }
-        if (note.bodyText.isNotBlank()) Text(note.bodyText, color = c.text, style = MaterialTheme.typography.bodyMedium)
+        if (note.bodyText.isNotBlank()) NoteBody(note.bodyText, sections, takes, c.text, c.accent, onNavigateToRef)
+    }
+}
+
+/** Renders `@mention` spans as tappable text, resolved live against this song's current sections/takes —
+ * the same case-insensitive displayLabel/name match [SongDetailViewModel.resolveMentions] uses at save time.
+ * An unmatched mention (typo, deleted section) just renders as plain text, same as it does unresolved in the model. */
+@Composable
+private fun NoteBody(text: String, sections: List<Section>, takes: List<Take>, textColor: Color, mentionColor: Color, onNavigateToRef: (SongDetailTab, String) -> Unit) {
+    data class Ref(val tab: SongDetailTab, val id: String)
+    val refs = mutableListOf<Ref?>()
+    val annotated = buildAnnotatedString {
+        var cursor = 0
+        for (match in NoteValidation.mentionMatches(text)) {
+            append(text.substring(cursor, match.range.first))
+            val token = match.groupValues[1].trim()
+            val section = sections.firstOrNull { it.displayLabel.equals(token, ignoreCase = true) }
+            val take = takes.firstOrNull { it.name.equals(token, ignoreCase = true) }
+            val ref = when { section != null -> Ref(SongDetailTab.LYRICS, section.id); take != null -> Ref(SongDetailTab.TAKES, take.id); else -> null }
+            if (ref != null) {
+                withStyle(SpanStyle(color = mentionColor, fontWeight = FontWeight.SemiBold)) { append(match.value) }
+            } else {
+                append(match.value)
+            }
+            refs += ref
+            cursor = match.range.last + 1
+        }
+        append(text.substring(cursor))
+    }
+    ClickableText(annotated, style = MaterialTheme.typography.bodyMedium.copy(color = textColor)) { offset ->
+        NoteValidation.mentionMatches(text).forEachIndexed { i, match ->
+            if (offset in match.range.first..match.range.last) refs.getOrNull(i)?.let { onNavigateToRef(it.tab, it.id) }
+        }
     }
 }
 
