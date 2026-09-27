@@ -57,11 +57,15 @@ import javax.inject.Inject
 @HiltViewModel
 class MainViewModel @Inject constructor(settings: SettingsRepository, private val deepLinks: DeepLinkResolver) : ViewModel() {
     val themeVariant: StateFlow<String?> = settings.themeVariant.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    /** External entry (notification / VIEW intent): the back stack is rebuilt as Library → target. */
     val deepLinkTargets = MutableSharedFlow<NavKey>(extraBufferCapacity = 1)
+    /** In-app navigation: the target is pushed, so back returns to where the user tapped. */
+    val inAppTargets = MutableSharedFlow<NavKey>(extraBufferCapacity = 1)
     fun onIntent(intent: Intent?) = viewModelScope.launch { deepLinks.resolve(intent?.data)?.let { deepLinkTargets.tryEmit(it) } }
     /** In-app nudge tap on a take — same resolution as the `songpad://take/{id}` notification deep link,
-     * so both paths land on the same Song's Takes tab, scrolled to that take, instead of just Library. */
-    fun openTake(takeId: String) = viewModelScope.launch { deepLinkTargets.tryEmit(deepLinks.resolve(host = "take", id = takeId)) }
+     * so both paths land on the same Song's Takes tab, scrolled to that take. Pushed, like Nudges → song,
+     * so back returns to Nudges rather than Library. */
+    fun openTake(takeId: String) = viewModelScope.launch { inAppTargets.tryEmit(deepLinks.resolve(host = "take", id = takeId)) }
 }
 
 @AndroidEntryPoint
@@ -96,6 +100,7 @@ fun SongPadApp(viewModel: MainViewModel) {
     }
 
     LaunchedEffect(Unit) { viewModel.deepLinkTargets.collect { target -> switchTopLevel(LibraryKey); if (target != LibraryKey) push(target) } }
+    LaunchedEffect(Unit) { viewModel.inAppTargets.collect { target -> if (target == LibraryKey) switchTopLevel(LibraryKey) else push(target) } }
 
     val current = backStack.lastOrNull() ?: LibraryKey
     Scaffold(

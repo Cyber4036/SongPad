@@ -54,7 +54,7 @@ class MainViewModelTest {
         ).getOrThrow()
         val vm = vm()
         val targets = mutableListOf<Any>()
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.deepLinkTargets.collect { targets += it } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.inAppTargets.collect { targets += it } }
 
         vm.openTake(take.id)
         advanceUntilIdle()
@@ -66,7 +66,7 @@ class MainViewModelTest {
     fun `opening a take nudge for a take that no longer exists falls back to Library`() = runTest(dispatcher) {
         val vm = vm()
         val targets = mutableListOf<Any>()
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.deepLinkTargets.collect { targets += it } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.inAppTargets.collect { targets += it } }
 
         vm.openTake("does-not-exist")
         advanceUntilIdle()

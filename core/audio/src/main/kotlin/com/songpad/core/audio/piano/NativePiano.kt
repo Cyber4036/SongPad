@@ -15,6 +15,9 @@ class NativePiano : AutoCloseable {
     fun noteOff(note: Int) = nativeNoteOff(handle, note)
     fun allNotesOff() = nativeAllNotesOff(handle)
 
+    /** ADR-0035: mix the sampler's output into the capture stream (process-wide; see sampler_tap.h). */
+    fun setCaptureMix(enabled: Boolean) = nativeSetCaptureMix(enabled)
+
     override fun close() {
         if (handle != 0L) { nativeClose(handle); nativeDestroy(handle); handle = 0L }
     }
@@ -29,6 +32,7 @@ class NativePiano : AutoCloseable {
     private external fun nativeNoteOn(handle: Long, note: Int, velocity: Int)
     private external fun nativeNoteOff(handle: Long, note: Int)
     private external fun nativeAllNotesOff(handle: Long)
+    private external fun nativeSetCaptureMix(enabled: Boolean)
 
     companion object {
         init { System.loadLibrary("songpad_audio") }

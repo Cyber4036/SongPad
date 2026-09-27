@@ -1,5 +1,6 @@
 package com.songpad.feature.capture.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,16 +88,32 @@ fun RecordScreen(
         }
     }
 
+    // Leaving pops this route and clears the ViewModel, which would strand a live take (or cancel a save
+    // mid-commit). Phase 0 §5: preserve the recording; discarding needs confirmation when loss is possible.
+    // So while a take is open, back/close goes through the same discard confirmation as the Discard button.
+    val takeOpen = state.holdsOpenTake()
+    val close = {
+        when {
+            state is CaptureState.Saving -> Unit
+            takeOpen -> viewModel.dispatch(CaptureIntent.RequestDiscard)
+            else -> onClose()
+        }
+    }
+    BackHandler(enabled = takeOpen, onBack = close)
+
     RecordContent(
         state = state,
         reviewPeaks = reviewPeaks,
         amplitudes = viewModel.amplitudes,
         dispatch = viewModel::dispatch,
-        onClose = onClose,
+        onClose = close,
         onOpenSettings = { MicrophonePermission.openAppSettings(context) },
         onRequestPermission = { requester.request() },
     )
 }
+
+private fun CaptureState.holdsOpenTake(): Boolean = this is CaptureState.Recording || this is CaptureState.Paused ||
+    this is CaptureState.Reviewing || this is CaptureState.Interrupted || this is CaptureState.Saving
 
 @Composable
 fun RecordContent(

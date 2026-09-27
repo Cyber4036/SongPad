@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "piano_oboe_stream.h"
+#include "sampler_tap.h"
 
 using songpad::PianoOutputStream;
 using songpad::PianoRegion;
@@ -64,6 +65,11 @@ JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeNoteO
 
 JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeAllNotesOff(JNIEnv*, jobject, jlong h) {
     reinterpret_cast<PianoOutputStream*>(h)->engine().allNotesOff();
+}
+
+// ADR-0035: routes the sampler into the capture file while the output route is headphones.
+JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeSetCaptureMix(JNIEnv*, jobject, jboolean enabled) {
+    songpad::SamplerTap::instance().setEnabled(enabled == JNI_TRUE);
 }
 
 }  // extern "C"

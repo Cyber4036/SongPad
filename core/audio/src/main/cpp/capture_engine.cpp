@@ -1,5 +1,7 @@
 #include "capture_engine.h"
 
+#include "sampler_tap.h"
+
 #include <android/log.h>
 
 #define LOG_TAG "songpad_audio"
@@ -108,7 +110,10 @@ int32_t CaptureEngine::xRunCount() {
 oboe::DataCallbackResult CaptureEngine::onAudioReady(oboe::AudioStream*, void* audioData, int32_t numFrames) {
     // Runs on Oboe's high-priority callback thread. Copy and return — nothing else (§7.2 rule 3).
     if (capturing_.load(std::memory_order_acquire)) {
-        ring_->write(static_cast<const int16_t*>(audioData), static_cast<uint32_t>(numFrames * kChannels));
+        auto* samples = static_cast<int16_t*>(audioData);
+        // ADR-0035: on headphones, the piano sampler's output is mixed in here — it has no acoustic path.
+        SamplerTap::instance().mixInto(samples, static_cast<uint32_t>(numFrames * kChannels));
+        ring_->write(samples, static_cast<uint32_t>(numFrames * kChannels));
         framesCaptured_.fetch_add(numFrames, std::memory_order_acq_rel);
     }
     return oboe::DataCallbackResult::Continue;

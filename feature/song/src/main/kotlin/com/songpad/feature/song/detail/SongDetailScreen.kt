@@ -3,6 +3,7 @@ package com.songpad.feature.song.detail
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -117,6 +118,11 @@ fun SongDetailScreen(
     viewModel: SongDetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(songId) { viewModel.bind(songId, initialTab) }
+    // Leaving mid voice note would clear the ViewModel and strand the live recording. Stopping a voice note
+    // is sending it (chat-style), so back first stops-and-saves it and keeps the user here; the next back leaves.
+    val recordingVoiceNote by viewModel.recordingVoiceNote.collectAsStateWithLifecycle()
+    BackHandler(enabled = recordingVoiceNote) { viewModel.stopVoiceNote() }
+    val guardedBack = { if (recordingVoiceNote) viewModel.stopVoiceNote() else onBack() }
     LaunchedEffect(Unit) { viewModel.navigateToLibrary.collect { onBack() } }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dialog by viewModel.dialog.collectAsStateWithLifecycle()
@@ -133,7 +139,7 @@ fun SongDetailScreen(
         }
         is SongDetailState.Loaded -> Column(Modifier.fillMaxSize()) {
             var menu by remember { mutableStateOf(false) }
-            SongPadTopBar(title = s.song.name, onBack = onBack) {
+            SongPadTopBar(title = s.song.name, onBack = { guardedBack() }) {
                 IconAction(if (s.song.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favorite", onClick = viewModel::toggleFavorite, tint = if (s.song.isFavorite) c.record else c.text)
                 IconAction(Icons.Filled.Share, "Export", onClick = { onExport(s.song.id) })
                 Box {

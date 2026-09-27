@@ -16,6 +16,7 @@ add_library(songpad_audio SHARED
     piano_oboe_stream.h
     piano_oboe_stream.cpp
     piano_jni.cpp
+    sampler_tap.h
 )
 
 target_compile_options(songpad_audio PRIVATE -Wall -Wextra -Werror=return-type -O2)

@@ -382,7 +382,8 @@ Media3/ExoPlayer, one shared player instance owned by a `PlaybackController` in 
 - Voice pool of 32, with oldest-then-quietest voice stealing.
 - Samples: ~15–25 MB mono, 3–4 velocity layers, shipped compressed (OGG/FLAC) and **decoded once to PCM in memory at load**, not decoded per note. Decoding per note adds unpredictable jitter to exactly the path that must be deterministic.
 - Loading is asynchronous and begins when the capture screen opens, not when Piano mode is toggled, so the first key press is never gated on I/O.
-- In Voice+Piano mode the sampler output goes to the speaker and is picked up acoustically by the microphone — that is the Phase 0 model (the mic recording is the audible performance capture). The sampler stream is **not** mixed into the capture file.
+- ~~In Voice+Piano mode the sampler output goes to the speaker and is picked up acoustically by the microphone — that is the Phase 0 model (the mic recording is the audible performance capture). The sampler stream is **not** mixed into the capture file.~~
+- **Amended 2026-09-27 (ADR-0035, product owner decision):** on the **speaker** route the above still holds — the mic captures the piano acoustically and nothing is mixed. On a **headphone** route (wired, USB, Bluetooth, hearing aid) there is no acoustic path, so the sampler output **is** mixed digitally into the capture stream, in the capture callback, before the ring buffer. The switch follows the live output route. It is never both at once, because that would record every note twice.
 
 ## 8.2 Keyboard UI
 
@@ -945,7 +946,7 @@ Team: **4–5 developers**, one acting as technical lead (source: `Rough_Plan_we
 | **Wk 5–8 — Parallel** | Review, integration, architectural integrity | D1: global/project capture, recovery UX. D2: piano Canvas, sampler, MIDI, Voice+Piano | D3: library, filters, favorites, rename, take detail. D4: section editor, notes timeline, `@` refs | D5: FTS5 search UI, nudges, export pipeline (incl. LAME/MP3, ~3–5 d), quality toggle + disclosure, settings, permissions |
 | **Wk 8–10 — Integration** | Cross-module nav, unified playback | Voice+Piano sync validation, latency profiling, routing | Loose-take filing, note refs, section reorder | Search filtering, nudge deep links, share sheet |
 | **Wk 10–12 — Hardening** | Leaks, ANRs, LMK survival, R8 rules | Focus loss, telephony, BT, 45-min sessions, device matrix | Migrations v1→v2, orphan GC, 1,000+ take performance | Back nav, rotation, large type, accessibility, small screens |
-| **Wk 12–14 — Beta** | Release variants, crash reporting | Device compatibility sign-off | Library-scale validation | Play declarations, dogfooding, polish |
+| **Wk 12–14 — Beta** | Release variants, crash reporting (Play Console Android vitals — no SDK, no network; ADR-0036) | Device compatibility sign-off | Library-scale validation | Play declarations, dogfooding, polish |
 
 Non-negotiable sequencing:
 - §15 contracts freeze at the end of Week 1. Nobody waits for an implementation.

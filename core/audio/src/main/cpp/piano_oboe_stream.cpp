@@ -1,5 +1,7 @@
 #include "piano_oboe_stream.h"
 
+#include "sampler_tap.h"
+
 #include <android/log.h>
 
 #define LOG_TAG "songpad_piano"
@@ -65,7 +67,9 @@ void PianoOutputStream::close() {
 oboe::DataCallbackResult PianoOutputStream::onAudioReady(oboe::AudioStream*, void* audioData, int32_t numFrames) {
     // THE PIANO AUDIO THREAD. render() is lock-free on its consumer side (§8.1) — no allocation,
     // no locks, no logging, no JNI, matching the rule already documented on CaptureEngine.
-    engine_.render(static_cast<int16_t*>(audioData), numFrames);
+    auto* out = static_cast<int16_t*>(audioData);
+    engine_.render(out, numFrames);
+    SamplerTap::instance().write(out, static_cast<uint32_t>(numFrames));  // ADR-0035; no-op unless enabled
     return oboe::DataCallbackResult::Continue;
 }
 
