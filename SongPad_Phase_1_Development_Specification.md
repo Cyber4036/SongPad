@@ -1001,11 +1001,33 @@ A spike that fails is not a crisis; it is the spike doing its job. Each has a na
 
 ## 21.3 Open decisions — product, not engineering
 
-Per Phase 0 §26, these are raised rather than implemented:
+Per Phase 0 §26, these are raised rather than implemented. **All three below were resolved by the product owner on 2026-09-27** — resolutions recorded immediately under each; the original questions are kept for context.
 
 1. **Recording quality mode as a product surface.** §4.3 introduces a user-visible Standard/Lossless setting with a ~3× storage consequence that **cannot be applied retroactively**. The engineering design is settled; the product surface is not. **Questions: is the first-save disclosure line (§4.4) acceptable in that surface, and what is the exact copy?** Phase 0 §16 defines a Storage & Data section but not its contents. Does not block Phase 1 — the toggle ships as a Settings stub and the disclosure line is added in Weeks 5–8.
+
+   **Resolved (2026-09-27):**
+   - The disclosure is a dismissible line under the first saved take, shown once and never repeated.
+   - It is **suppressed entirely if the user already chose Lossless in Settings** — there is nothing to disclose to someone who already picked the higher-quality option.
+   - Copy: *"Recording in Standard quality. Lossless uses about 3× the space and applies to new recordings only. Change →"*
+   - Settings → Storage & Data, next to the quality toggle: *"Applies to new recordings only. Existing takes keep their format."*
+
 2. **Storage honesty in Settings.** Audio is excluded from cloud backup (§9.5), so uninstalling loses recordings. Phase 0 §16 has a Storage & Data section but does not state the copy. **Question: what does Settings say, and is there a V1 manual-backup affordance beyond Export?**
+
+   **Resolved (2026-09-27):**
+   - Storage notice copy: *"Recordings are stored only on this phone and aren't included in cloud backup. Uninstalling SongPad or losing the phone deletes them. To keep a copy, export your songs or takes."*
+   - Storage used is shown as "N takes · X MB".
+   - **No backup feature beyond Export in V1.** A backup without a restore creates an expectation the app can't meet; a full library archive-and-restore is V1.1 or V2 work, not V1.
+   - **Design-reference correction**: `Capture.html` previously showed a fake "Auto-backup nightly over Wi-Fi" toggle, a "Back up now" action, and a "Backup finished" notification — all of which contradict §9.5 and this decision. No such feature was ever built in the app; the prototype was wrong and has been corrected to match this decision (no auto-backup, no manual backup beyond Export).
+
 3. **Recovery prompt wording and timing.** §9.4 recovers unfinished takes, a user-facing behavior not described in Phase 0. **Question: prompt on launch, or surface silently in the library as a recovered item?**
+
+   **Resolved (2026-09-27):**
+   - Detected on launch (unchanged — `AudioRecoveryManager.scanOnce()` already ran at app start; only the *rendering surface* was open).
+   - Shown as **a non-blocking banner at the top of the Library** — no modal, and nothing on the Record screen. (The engineering design's original placement — inline on the Record screen — is now wrong and has been moved to the Library per this decision.)
+   - Copy, one recovered recording: *"We recovered 2:41 of an unfinished recording. Keep it?"* (duration is the actual recovered duration, not literally "2:41"). More than one: *"We recovered 3 unfinished recordings (5:12 total). Keep them?"*
+   - Keep saves it as an unassigned take named **"Recovered take (Sep 25)"** (actual date, not literally "Sep 25").
+   - Discard asks for confirmation first, per Phase 0's destructive-action rule.
+   - If the user ignores the banner, it stays until they choose — no auto-dismiss.
 
 None of these blocks Week 1–4 work.
 

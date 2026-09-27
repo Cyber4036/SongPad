@@ -1,7 +1,6 @@
 package com.songpad.feature.capture
 
 import com.google.common.truth.Truth.assertThat
-import com.songpad.core.audio.recovery.AudioRecoveryManager
 import com.songpad.core.data.testing.FakeAudioRecorderEngine
 import com.songpad.core.data.testing.FakeMidiCaptureEngine
 import com.songpad.core.data.testing.FakePianoSamplerEngine
@@ -20,7 +19,6 @@ import com.songpad.core.model.take.TakeStatus
 import com.songpad.core.model.take.TakeType
 import com.songpad.core.model.usecase.DiscardRecordingUseCase
 import com.songpad.core.model.usecase.FinalizeTakeUseCase
-import com.songpad.core.model.usecase.RecoverTakeUseCase
 import com.songpad.core.model.usecase.StartRecordingUseCase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -48,7 +46,6 @@ class CaptureViewModelTest {
     private val transcodes = FakeTranscodeScheduler()
     private val storage = FakeStorageProbe()
     private val bound = mutableListOf<String>()
-    private val recovery = AudioRecoveryManager(takes)
 
     private lateinit var vm: CaptureViewModel
     private val effects = mutableListOf<CaptureEffect>()
@@ -61,8 +58,6 @@ class CaptureViewModelTest {
             StartRecordingUseCase(engine, settings, store.ids, store.clock, storage),
             FinalizeTakeUseCase(engine, midi, takes, settings, transcodes),
             DiscardRecordingUseCase(engine, midi),
-            RecoverTakeUseCase(takes, transcodes),
-            recovery,
         )
     }
 

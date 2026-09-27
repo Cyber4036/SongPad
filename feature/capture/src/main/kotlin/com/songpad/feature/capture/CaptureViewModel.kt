@@ -2,7 +2,6 @@ package com.songpad.feature.capture
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.songpad.core.audio.recovery.AudioRecoveryManager
 import com.songpad.core.model.audio.AudioRecorderEngine
 import com.songpad.core.model.audio.PlaybackController
 import com.songpad.core.model.audio.PlaybackSource
@@ -23,7 +22,6 @@ import com.songpad.core.model.take.TakeType
 import com.songpad.core.model.usecase.CaptureSession
 import com.songpad.core.model.usecase.DiscardRecordingUseCase
 import com.songpad.core.model.usecase.FinalizeTakeUseCase
-import com.songpad.core.model.usecase.RecoverTakeUseCase
 import com.songpad.core.model.usecase.StartRecordingUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -34,8 +32,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -57,8 +53,6 @@ class CaptureViewModel @Inject constructor(
     private val startRecording: StartRecordingUseCase,
     private val finalizeTake: FinalizeTakeUseCase,
     private val discardRecording: DiscardRecordingUseCase,
-    private val recoverTake: RecoverTakeUseCase,
-    private val recovery: AudioRecoveryManager,
     private val logger: Logger,
 ) : ViewModel() {
 
@@ -79,10 +73,6 @@ class CaptureViewModel @Inject constructor(
     private val _reviewPeaks = MutableStateFlow(FloatArray(0))
     /** Amplitudes accumulated during this recording, for the paused-review scrubber. */
     val reviewPeaks: StateFlow<FloatArray> = _reviewPeaks.asStateFlow()
-
-    val recoveryState: StateFlow<RecoveryUiState> = recovery.state
-        .map { it.toUi() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, RecoveryUiState.None)
 
     private val peakBuffer = ArrayList<Float>(6_000)
 
@@ -148,15 +138,6 @@ class CaptureViewModel @Inject constructor(
                 midi.onKeyUp(intent.note, intent.eventTimeNanos)
                 piano.noteOff(intent.note)
             }
-            CaptureIntent.KeepRecovered -> keepRecovered()
-            CaptureIntent.DiscardRecovered -> (recovery.state.value as? AudioRecoveryManager.RecoveryState.Prompt)?.let {
-                recovery.set(AudioRecoveryManager.RecoveryState.DiscardConfirm(it.orphans))
-            }
-            CaptureIntent.ConfirmDiscardRecovered -> discardRecovered()
-            CaptureIntent.CancelDiscardRecovered -> (recovery.state.value as? AudioRecoveryManager.RecoveryState.DiscardConfirm)?.let {
-                recovery.set(AudioRecoveryManager.RecoveryState.Prompt(it.orphans))
-            }
-            CaptureIntent.DismissRecovered -> recovery.clear()
             is CaptureIntent.EngineChanged -> onEngine(intent.state)
             is CaptureIntent.PlaybackChanged -> onPlayback(intent.state)
         }
@@ -344,25 +325,6 @@ class CaptureViewModel @Inject constructor(
         }
     }
 
-    // ── recovery (§9.4 step 5) ──
-
-    private suspend fun keepRecovered() {
-        val prompt = recovery.state.value as? AudioRecoveryManager.RecoveryState.Prompt ?: return
-        recovery.set(AudioRecoveryManager.RecoveryState.Restoring)
-        val kept = mutableListOf<String>()
-        prompt.orphans.forEach { orphan ->
-            if (orphan.isNoise) recoverTake.discard(orphan)
-            else recoverTake.keep(orphan).onSuccess { kept += it.id }.onFailure { logger.error(TAG, it.domainError) }
-        }
-        recovery.set(AudioRecoveryManager.RecoveryState.Restored(kept))
-    }
-
-    private suspend fun discardRecovered() {
-        val confirm = recovery.state.value as? AudioRecoveryManager.RecoveryState.DiscardConfirm ?: return
-        confirm.orphans.forEach { recoverTake.discard(it).onFailure { t -> logger.error(TAG, t.domainError) } }
-        recovery.clear()
-    }
-
     // ── helpers ──
 
     private fun failedState(error: DomainError, type: TakeType, songId: String?): CaptureState = when (error) {
@@ -392,14 +354,6 @@ class CaptureViewModel @Inject constructor(
 
     private fun CaptureState.isCapturingPiano(): Boolean = this is CaptureState.Recording && type != TakeType.VOICE
 
-    private fun AudioRecoveryManager.RecoveryState.toUi(): RecoveryUiState = when (this) {
-        AudioRecoveryManager.RecoveryState.None -> RecoveryUiState.None
-        is AudioRecoveryManager.RecoveryState.Prompt -> RecoveryUiState.Prompt(orphans)
-        AudioRecoveryManager.RecoveryState.Restoring -> RecoveryUiState.Restoring
-        is AudioRecoveryManager.RecoveryState.Restored -> RecoveryUiState.Restored(takeIds)
-        is AudioRecoveryManager.RecoveryState.DiscardConfirm -> RecoveryUiState.DiscardConfirm(orphans)
-    }
-
     private data class Quad(val session: CaptureSession, val elapsed: Long, val review: ReviewPlayback, val confirm: Boolean)
 
     companion object {
@@ -409,7 +363,7 @@ class CaptureViewModel @Inject constructor(
         fun create(
             engine: AudioRecorderEngine, playback: PlaybackController, midi: MidiCaptureEngine, midiBinder: MidiTakeBinder,
             piano: PianoSamplerEngine, settings: SettingsRepository, start: StartRecordingUseCase, finalize: FinalizeTakeUseCase,
-            discard: DiscardRecordingUseCase, recover: RecoverTakeUseCase, recovery: AudioRecoveryManager, logger: Logger = Logger.Noop,
-        ) = CaptureViewModel(engine, playback, midi, midiBinder, piano, settings, start, finalize, discard, recover, recovery, logger)
+            discard: DiscardRecordingUseCase, logger: Logger = Logger.Noop,
+        ) = CaptureViewModel(engine, playback, midi, midiBinder, piano, settings, start, finalize, discard, logger)
     }
 }

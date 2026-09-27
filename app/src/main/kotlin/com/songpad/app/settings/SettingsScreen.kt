@@ -68,13 +68,13 @@ fun SettingsScreen(onBack: () -> Unit, onOpenNudges: () -> Unit, viewModel: Sett
                 trailing = { Switch(checked = lossless, onCheckedChange = { viewModel.setQualityMode(if (it) QualityMode.LOSSLESS else QualityMode.STANDARD) }) },
             )
             Text(
-                "Applies to new recordings only — existing takes keep the quality they were recorded in. Lossless files are roughly four times larger.",
+                "Applies to new recordings only. Existing takes keep their format.",
                 Modifier.padding(horizontal = Spacing.screen), style = MaterialTheme.typography.bodySmall, color = c.textSecondary,
             )
             Spacer(Modifier.height(Spacing.sm))
-            SettingRow("Recordings on this device", "${state.takeDirCount} take folder${if (state.takeDirCount == 1) "" else "s"} · ${state.storageUsedBytes.mb()}", onClick = viewModel::refreshStorage)
+            SettingRow("Recordings on this device", "${state.takeDirCount} take${if (state.takeDirCount == 1) "" else "s"} · ${state.storageUsedBytes.mb()}", onClick = viewModel::refreshStorage)
             Text(
-                "Everything stays on this device. Uninstalling SongPad deletes all recordings, lyrics and notes — export a song first if you want to keep it.",
+                "Recordings are stored only on this phone and aren't included in cloud backup. Uninstalling SongPad or losing the phone deletes them. To keep a copy, export your songs or takes.",
                 Modifier.padding(horizontal = Spacing.screen), style = MaterialTheme.typography.bodySmall, color = c.warning,
             )
 

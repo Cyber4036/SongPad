@@ -1,6 +1,7 @@
 package com.songpad.feature.song
 
 import com.google.common.truth.Truth.assertThat
+import com.songpad.core.audio.recovery.AudioRecoveryManager
 import com.songpad.core.data.testing.FakeAudioRecorderEngine
 import com.songpad.core.data.testing.FakeLyricsRepository
 import com.songpad.core.data.testing.FakeMidiCaptureEngine
@@ -20,6 +21,7 @@ import com.songpad.core.model.song.SongStatus
 import com.songpad.core.model.state.QualityDisclosureState
 import com.songpad.core.model.take.AudioFormat
 import com.songpad.core.model.take.CapturedAudio
+import com.songpad.core.model.take.OrphanedTake
 import com.songpad.core.model.take.QualityMode
 import com.songpad.core.model.take.TakeDraft
 import com.songpad.core.model.take.TakePaths
@@ -28,6 +30,7 @@ import com.songpad.core.model.usecase.AssignTakeToSongUseCase
 import com.songpad.core.model.usecase.CreateSongFromTakeUseCase
 import com.songpad.core.model.usecase.DiscardRecordingUseCase
 import com.songpad.core.model.usecase.FinalizeTakeUseCase
+import com.songpad.core.model.usecase.RecoverTakeUseCase
 import com.songpad.core.model.usecase.RenameTakeUseCase
 import com.songpad.core.model.usecase.StartRecordingUseCase
 import com.songpad.feature.song.detail.LyricsState
@@ -72,7 +75,10 @@ class SongViewModelsTest {
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
 
-    private fun library() = LibraryViewModel(songs, takes, settings, CreateSongFromTakeUseCase(songs), AssignTakeToSongUseCase(takes, songs), Logger.Noop)
+    private fun library() = LibraryViewModel(
+        songs, takes, settings, CreateSongFromTakeUseCase(songs), AssignTakeToSongUseCase(takes, songs),
+        AudioRecoveryManager(takes), RecoverTakeUseCase(takes, transcodes, store.clock), Logger.Noop,
+    )
     private fun detail() = SongDetailViewModel(
         songs, takes, lyrics, notes, playback, RenameTakeUseCase(takes),
         StartRecordingUseCase(engine, settings, store.ids, store.clock, storage),
@@ -120,6 +126,50 @@ class SongViewModelsTest {
         assertThat(vm.state.value.disclosure).isEqualTo(QualityDisclosureState.FirstSaveDisclosure("Standard"))
         vm.dismissDisclosure(); advanceUntilIdle()
         assertThat(vm.state.value.disclosure).isEqualTo(QualityDisclosureState.Hidden)
+    }
+
+    @Test
+    fun `library - first-save disclosure suppressed when Lossless already chosen`() = runTest(dispatcher) {
+        val vm = library()
+        subscribe(vm.state)
+        settings.setQualityMode(QualityMode.LOSSLESS)
+        settings.markFirstTakeSaved(); advanceUntilIdle()
+        // §21.3 #1 final decision: nothing to disclose when the user already picked the higher-quality option.
+        assertThat(vm.state.value.disclosure).isEqualTo(QualityDisclosureState.Hidden)
+    }
+
+    @Test
+    fun `library - recovery banner keep and discard flows`() = runTest(dispatcher) {
+        val recoveryManager = AudioRecoveryManager(takes)
+        val vm = LibraryViewModel(
+            songs, takes, settings, CreateSongFromTakeUseCase(songs), AssignTakeToSongUseCase(takes, songs),
+            recoveryManager, RecoverTakeUseCase(takes, transcodes, store.clock), Logger.Noop,
+        )
+        subscribe(vm.state, vm.recoveryState)
+        val real = OrphanedTake("orphan-1", TakePaths.pcm("orphan-1") + ".tmp", AudioFormat.BYTES_PER_MS * 5_000L, hasDbRow = false, hasEventsLog = true, songId = null)
+        val noise = OrphanedTake("orphan-2", TakePaths.pcm("orphan-2") + ".tmp", 10L, hasDbRow = false, hasEventsLog = true, songId = null)
+        takes.orphans += listOf(real, noise)
+        recoveryManager.scanOnce(); advanceUntilIdle()
+        val prompt = vm.recoveryState.value as AudioRecoveryManager.RecoveryState.Prompt
+        assertThat(prompt.orphans).hasSize(2)
+
+        vm.keepRecovered(); advanceUntilIdle()
+        val restored = vm.recoveryState.value as AudioRecoveryManager.RecoveryState.Restored
+        assertThat(restored.takeIds).hasSize(1) // only the non-noise orphan becomes a kept take
+        assertThat(takes.getTake(restored.takeIds.single())!!.name).startsWith("Recovered take (")
+        vm.dismissRecovered()
+        assertThat(vm.recoveryState.value).isEqualTo(AudioRecoveryManager.RecoveryState.None)
+
+        // Discard asks for confirmation before it actually deletes anything.
+        val second = OrphanedTake("orphan-3", TakePaths.pcm("orphan-3") + ".tmp", AudioFormat.BYTES_PER_MS * 3_000L, hasDbRow = false, hasEventsLog = true, songId = null)
+        recoveryManager.set(AudioRecoveryManager.RecoveryState.Prompt(listOf(second)))
+        vm.requestDiscardRecovered()
+        assertThat(vm.recoveryState.value).isInstanceOf(AudioRecoveryManager.RecoveryState.DiscardConfirm::class.java)
+        vm.cancelDiscardRecovered()
+        assertThat(vm.recoveryState.value).isInstanceOf(AudioRecoveryManager.RecoveryState.Prompt::class.java)
+        vm.requestDiscardRecovered()
+        vm.confirmDiscardRecovered(); advanceUntilIdle()
+        assertThat(vm.recoveryState.value).isEqualTo(AudioRecoveryManager.RecoveryState.None)
     }
 
     @Test

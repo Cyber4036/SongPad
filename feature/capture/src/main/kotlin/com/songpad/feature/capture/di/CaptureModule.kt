@@ -34,7 +34,7 @@ object CaptureUseCaseModule {
 
     @Provides fun discard(engine: AudioRecorderEngine, midi: MidiCaptureEngine) = DiscardRecordingUseCase(engine, midi)
 
-    @Provides fun recover(takes: TakeRepository, transcodes: TranscodeScheduler) = RecoverTakeUseCase(takes, transcodes)
+    @Provides fun recover(takes: TakeRepository, transcodes: TranscodeScheduler, clock: Clock) = RecoverTakeUseCase(takes, transcodes, clock)
 }
 
 @Module

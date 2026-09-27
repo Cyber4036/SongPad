@@ -3,7 +3,6 @@ package com.songpad.feature.capture
 import com.songpad.core.model.audio.InterruptionReason
 import com.songpad.core.model.error.DomainError
 import com.songpad.core.model.state.PermissionState
-import com.songpad.core.model.take.OrphanedTake
 import com.songpad.core.model.take.QualityMode
 import com.songpad.core.model.take.Take
 import com.songpad.core.model.take.TakeType
@@ -106,13 +105,6 @@ sealed interface CaptureIntent {
     data class KeyDown(val note: Int, val velocity: Int, val eventTimeNanos: Long) : CaptureIntent
     data class KeyUp(val note: Int, val eventTimeNanos: Long) : CaptureIntent
 
-    // §9.4 recovery prompt
-    data object KeepRecovered : CaptureIntent
-    data object DiscardRecovered : CaptureIntent
-    data object ConfirmDiscardRecovered : CaptureIntent
-    data object CancelDiscardRecovered : CaptureIntent
-    data object DismissRecovered : CaptureIntent
-
     /** Internal: engine state changes are folded through the same serial reducer. */
     data class EngineChanged(val state: com.songpad.core.model.audio.RecordingState) : CaptureIntent
     data class PlaybackChanged(val state: com.songpad.core.model.audio.PlaybackState) : CaptureIntent
@@ -123,16 +115,5 @@ sealed interface CaptureEffect {
     data object RequestMicrophonePermission : CaptureEffect
     data object OpenAppSettings : CaptureEffect
     data class Message(val text: String) : CaptureEffect
-}
-
-/** §17 "Recovery" states as the capture feature renders them. Mirrors AudioRecoveryManager.RecoveryState. */
-sealed interface RecoveryUiState {
-    data object None : RecoveryUiState
-    data class Prompt(val orphans: List<OrphanedTake>) : RecoveryUiState {
-        val totalDurationMs: Long get() = orphans.sumOf { it.durationMs }
-    }
-    data object Restoring : RecoveryUiState
-    data class Restored(val takeIds: List<String>) : RecoveryUiState
-    data class DiscardConfirm(val orphans: List<OrphanedTake>) : RecoveryUiState
 }
 

@@ -20,10 +20,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.songpad.core.audio.recovery.AudioRecoveryManager
 import com.songpad.core.model.song.Song
 import com.songpad.core.model.song.SongFilter
 import com.songpad.core.model.song.SongStatus
@@ -37,6 +39,7 @@ import com.songpad.core.ui.components.EmptyState
 import com.songpad.core.ui.components.FilterPill
 import com.songpad.core.ui.components.IconAction
 import com.songpad.core.ui.components.InlineDisclosure
+import com.songpad.core.ui.components.PrimaryButton
 import com.songpad.core.ui.components.SecondaryButton
 import com.songpad.core.ui.components.SectionHeader
 import com.songpad.core.ui.components.SongListItem
@@ -61,6 +64,7 @@ fun LibraryScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val sheet by viewModel.sheet.collectAsStateWithLifecycle()
+    val recovery by viewModel.recoveryState.collectAsStateWithLifecycle()
     val c = SongPadTheme.colors
 
     Column(Modifier.fillMaxSize()) {
@@ -68,16 +72,17 @@ fun LibraryScreen(
             IconAction(Icons.Filled.Search, "Search", onClick = onOpenSearch)
             IconAction(Icons.Filled.Settings, "Settings", onClick = onOpenSettings)
         }
+        RecoveryBanner(recovery, viewModel)
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = Spacing.screen)) {
             SongFilter.entries.forEach { f ->
                 FilterPill(f.label(), selected = state.filter == f, onClick = { viewModel.setFilter(f) })
                 Spacer(Modifier.width(Spacing.sm))
             }
         }
-        (state.disclosure as? QualityDisclosureState.FirstSaveDisclosure)?.let { d ->
+        (state.disclosure as? QualityDisclosureState.FirstSaveDisclosure)?.let {
             InlineDisclosure(
-                text = "Recordings are saved in ${d.currentModeLabel} quality. You can change this in Settings — it applies to new recordings only.",
-                actionLabel = "Settings", onAction = onOpenSettings, onDismiss = viewModel::dismissDisclosure,
+                text = "Recording in Standard quality. Lossless uses about 3× the space and applies to new recordings only.",
+                actionLabel = "Change →", onAction = onOpenSettings, onDismiss = viewModel::dismissDisclosure,
                 modifier = Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.sm),
             )
         }
@@ -112,6 +117,54 @@ fun LibraryScreen(
         is LibrarySheet.ConfirmDeleteTake -> ConfirmDialog(
             title = "Delete \"${sh.take.name}\"?", body = "The take is removed from your library. Its file is purged after 7 days.",
             confirmLabel = "Delete", onConfirm = { viewModel.deleteTake(sh.take.id) }, onDismiss = viewModel::closeSheet,
+        )
+    }
+}
+
+/**
+ * §9.4 / §21.3 #3 final decision: ONE non-blocking banner at the top of the Library — no modal, and never
+ * shown on the Record screen. Discard still confirms first (Phase 0 destructive-action rule), via a real
+ * dialog; that's a separate concern from the banner itself being non-blocking.
+ */
+@Composable
+private fun RecoveryBanner(state: AudioRecoveryManager.RecoveryState, vm: LibraryViewModel) {
+    val c = SongPadTheme.colors
+    when (state) {
+        AudioRecoveryManager.RecoveryState.None -> Unit
+        is AudioRecoveryManager.RecoveryState.Prompt -> {
+            val count = state.orphans.count { !it.isNoise }
+            val totalMs = state.orphans.sumOf { it.durationMs }
+            Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.screen, vertical = Spacing.sm)) {
+                Text(
+                    if (count == 1) "We recovered ${DurationFormat.mmss(totalMs)} of an unfinished recording. Keep it?"
+                    else "We recovered $count unfinished recordings (${DurationFormat.mmss(totalMs)} total). Keep them?",
+                    style = MaterialTheme.typography.bodyMedium, color = c.text,
+                )
+                Spacer(Modifier.height(Spacing.sm))
+                Row {
+                    PrimaryButton("Keep", onClick = vm::keepRecovered)
+                    Spacer(Modifier.width(Spacing.sm))
+                    SecondaryButton("Discard", onClick = vm::requestDiscardRecovered, destructive = true)
+                }
+            }
+        }
+        AudioRecoveryManager.RecoveryState.Restoring -> Text("Restoring…", Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.sm), color = c.textSecondary)
+        is AudioRecoveryManager.RecoveryState.Restored -> Row(
+            Modifier.fillMaxWidth().padding(horizontal = Spacing.screen, vertical = Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (state.takeIds.isEmpty()) "Nothing worth keeping was found." else "Recovered as unassigned takes.",
+                Modifier.weight(1f), color = c.textSecondary, style = MaterialTheme.typography.bodyMedium,
+            )
+            SecondaryButton("OK", onClick = vm::dismissRecovered)
+        }
+        is AudioRecoveryManager.RecoveryState.DiscardConfirm -> ConfirmDialog(
+            title = "Discard unsaved recording?",
+            body = "This deletes ${DurationFormat.mmss(state.orphans.sumOf { it.durationMs })} of audio permanently.",
+            confirmLabel = "Discard",
+            onConfirm = vm::confirmDiscardRecovered,
+            onDismiss = vm::cancelDiscardRecovered,
         )
     }
 }

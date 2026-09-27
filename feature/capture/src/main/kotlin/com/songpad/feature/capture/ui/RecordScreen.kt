@@ -69,7 +69,6 @@ fun RecordScreen(
 ) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val recovery by viewModel.recoveryState.collectAsStateWithLifecycle()
     val reviewPeaks by viewModel.reviewPeaks.collectAsStateWithLifecycle()
     val requester = rememberMicrophonePermissionRequester { viewModel.dispatch(CaptureIntent.PermissionResult(it)) }
 
@@ -90,7 +89,6 @@ fun RecordScreen(
 
     RecordContent(
         state = state,
-        recovery = recovery,
         reviewPeaks = reviewPeaks,
         amplitudes = viewModel.amplitudes,
         dispatch = viewModel::dispatch,
@@ -103,7 +101,6 @@ fun RecordScreen(
 @Composable
 fun RecordContent(
     state: CaptureState,
-    recovery: com.songpad.feature.capture.RecoveryUiState,
     reviewPeaks: FloatArray,
     amplitudes: kotlinx.coroutines.flow.SharedFlow<Float>,
     dispatch: (CaptureIntent) -> Unit,
@@ -125,7 +122,6 @@ fun RecordContent(
             onBack = onClose,
             backContentDescription = "Close",
         )
-        RecoveryPrompt(recovery, dispatch)
 
         Column(
             Modifier.weight(1f).fillMaxWidth().padding(horizontal = Spacing.screen),

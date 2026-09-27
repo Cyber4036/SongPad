@@ -2,6 +2,7 @@ package com.songpad.feature.song.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.songpad.core.audio.recovery.AudioRecoveryManager
 import com.songpad.core.model.data.SettingsRepository
 import com.songpad.core.model.data.SongRepository
 import com.songpad.core.model.data.TakeRepository
@@ -14,6 +15,7 @@ import com.songpad.core.model.take.QualityMode
 import com.songpad.core.model.take.Take
 import com.songpad.core.model.usecase.AssignTakeToSongUseCase
 import com.songpad.core.model.usecase.CreateSongFromTakeUseCase
+import com.songpad.core.model.usecase.RecoverTakeUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -38,6 +40,8 @@ class LibraryViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val createSongFromTake: CreateSongFromTakeUseCase,
     private val assignTakeToSong: AssignTakeToSongUseCase,
+    private val recoveryManager: AudioRecoveryManager,
+    private val recoverTake: RecoverTakeUseCase,
     private val logger: Logger,
 ) : ViewModel() {
 
@@ -51,11 +55,19 @@ class LibraryViewModel @Inject constructor(
 
     /**
      * §4.4 surface 1: the one-time, dismissible first-save disclosure — shown after the first take exists and
-     * until dismissed. Copy in the screen states which mode is on and that it applies to new recordings only.
+     * until dismissed. §21.3 #1 final decision: only ever shown for Standard — a user who already chose
+     * Lossless has nothing to be told to switch to.
      */
     private val disclosure = combine(settings.hasSavedFirstTake, settings.firstSaveDisclosureDismissed, settings.qualityMode) { saved, dismissed, mode ->
-        if (saved && !dismissed) QualityDisclosureState.FirstSaveDisclosure(mode.label()) else QualityDisclosureState.Hidden
+        if (saved && !dismissed && mode == QualityMode.STANDARD) QualityDisclosureState.FirstSaveDisclosure(mode.label()) else QualityDisclosureState.Hidden
     }
+
+    /**
+     * §9.4 / §21.3 #3 final decision: a non-blocking banner at the top of the Library, never on the Record
+     * screen. Detection itself already runs once on app launch ([AudioRecoveryManager.scanOnce] from
+     * `SongPadApplication`); this ViewModel only renders and drives Keep/Discard.
+     */
+    val recoveryState: StateFlow<AudioRecoveryManager.RecoveryState> = recoveryManager.state
 
     val state: StateFlow<LibraryState> = combine(
         filter.flatMapLatest { f -> combine(songs.observeSongs(f), takes.observeUnassigned()) { s, t -> Triple(f, s, t) } },
@@ -92,6 +104,40 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun deleteTake(takeId: String) = viewModelScope.launch { takes.softDelete(takeId).report(); closeSheet() }
+
+    // ── recovery banner (§9.4 step 5) ──
+
+    fun keepRecovered() = viewModelScope.launch {
+        val prompt = recoveryManager.state.value as? AudioRecoveryManager.RecoveryState.Prompt ?: return@launch
+        recoveryManager.set(AudioRecoveryManager.RecoveryState.Restoring)
+        val kept = mutableListOf<String>()
+        prompt.orphans.forEach { orphan ->
+            if (orphan.isNoise) recoverTake.discard(orphan)
+            else recoverTake.keep(orphan).onSuccess { kept += it.id }.onFailure { logger.error(TAG, it.domainError) }
+        }
+        recoveryManager.set(AudioRecoveryManager.RecoveryState.Restored(kept))
+    }
+
+    /** Discard asks for confirmation first (Phase 0 destructive-action rule) — this moves Prompt -> DiscardConfirm. */
+    fun requestDiscardRecovered() {
+        (recoveryManager.state.value as? AudioRecoveryManager.RecoveryState.Prompt)?.let {
+            recoveryManager.set(AudioRecoveryManager.RecoveryState.DiscardConfirm(it.orphans))
+        }
+    }
+
+    fun cancelDiscardRecovered() {
+        (recoveryManager.state.value as? AudioRecoveryManager.RecoveryState.DiscardConfirm)?.let {
+            recoveryManager.set(AudioRecoveryManager.RecoveryState.Prompt(it.orphans))
+        }
+    }
+
+    fun confirmDiscardRecovered() = viewModelScope.launch {
+        val confirm = recoveryManager.state.value as? AudioRecoveryManager.RecoveryState.DiscardConfirm ?: return@launch
+        confirm.orphans.forEach { recoverTake.discard(it).onFailure { t -> logger.error(TAG, t.domainError) } }
+        recoveryManager.clear()
+    }
+
+    fun dismissRecovered() { recoveryManager.clear() }
 
     private fun <T> Result<T>.report(): Result<T> = onFailure { t -> t.domainError.let { logger.error(TAG, it); _errors.tryEmit(it) } }
 
