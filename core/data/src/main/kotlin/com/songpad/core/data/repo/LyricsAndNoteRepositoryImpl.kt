@@ -71,7 +71,17 @@ class LyricsRepositoryImpl @Inject constructor(
         dao.updateSection(s.copy(bodyText = bodyText, sync = s.sync.touched(clock.nowMillis())))
     }
 
-    override suspend fun moveSection(sectionId: String, toIndex: Int): Result<Unit> = reorder(sectionId) { SectionOrdering.move(it, sectionId, toIndex) }
+    /** Sort-order-only write, deliberately not [reorder]'s general full-entity path: a move can land while a
+     * different section's autosave debounce is still pending, and rewriting whole rows from a stale in-memory
+     * snapshot would risk clobbering that section's just-typed bodyText with what was on disk when this read
+     * happened (§21 no-destructive-editing). */
+    override suspend fun moveSection(sectionId: String, toIndex: Int): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
+        db.withTransactionCompat {
+            val s = dao.section(sectionId) ?: throw DomainException(DataError.NotFound("Section", sectionId))
+            val current = dao.sections(s.documentId).map { it.toDomain() }
+            SectionOrdering.renumber(SectionOrdering.move(current, sectionId, toIndex)).forEach { dao.updateSortOrder(it.id, it.sortOrder, it.number) }
+        }
+    }
 
     override suspend fun deleteSection(sectionId: String): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
         val now = clock.nowMillis()
@@ -80,14 +90,6 @@ class LyricsRepositoryImpl @Inject constructor(
             dao.updateSection(s.copy(sync = s.sync.softDeleted(now)))
             val remaining = dao.sections(s.documentId).map { it.toDomain() }
             dao.updateSections(SectionOrdering.renumber(SectionOrdering.normalize(remaining)).map { it.toEntity() })
-        }
-    }
-
-    private suspend fun reorder(sectionId: String, f: (List<Section>) -> List<Section>): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
-        db.withTransactionCompat {
-            val s = dao.section(sectionId) ?: throw DomainException(DataError.NotFound("Section", sectionId))
-            val current = dao.sections(s.documentId).map { it.toDomain() }
-            dao.updateSections(SectionOrdering.renumber(f(current)).map { it.toEntity() })
         }
     }
 

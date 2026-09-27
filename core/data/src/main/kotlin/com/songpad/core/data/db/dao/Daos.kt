@@ -91,6 +91,10 @@ interface LyricsDao {
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertSection(section: SectionEntity)
     @Update suspend fun updateSection(section: SectionEntity)
     @Update suspend fun updateSections(sections: List<SectionEntity>)
+    /** Touches only `sort_order`/`number` — used by reorder so it can never clobber a concurrent bodyText
+     * autosave that's still in its debounce window (§21 no-destructive-editing). `number` must move with
+     * `sort_order`: [SectionOrdering.renumber] recomputes display numbering ("Verse 1"/"Verse 2") from position. */
+    @Query("UPDATE section SET sort_order = :sortOrder, number = :number WHERE id = :id") suspend fun updateSortOrder(id: String, sortOrder: Int, number: Int?)
     @Query("SELECT * FROM section WHERE id = :id AND deleted = 0") suspend fun section(id: String): SectionEntity?
     @Query("SELECT * FROM section WHERE document_id = :documentId AND deleted = 0 ORDER BY sort_order ASC") suspend fun sections(documentId: String): List<SectionEntity>
     @Query("SELECT * FROM section WHERE document_id = :documentId AND deleted = 0 ORDER BY sort_order ASC") fun observeSections(documentId: String): Flow<List<SectionEntity>>
