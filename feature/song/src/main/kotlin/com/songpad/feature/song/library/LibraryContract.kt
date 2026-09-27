@@ -4,6 +4,7 @@ import com.songpad.core.model.song.Song
 import com.songpad.core.model.song.SongFilter
 import com.songpad.core.model.state.QualityDisclosureState
 import com.songpad.core.model.take.Take
+import com.songpad.feature.song.detail.NowPlaying
 
 /**
  * §17 "Songs" states: EmptyLibrary · Populated · Filtered. (SearchResults is owned by :feature:search — the
@@ -12,19 +13,25 @@ import com.songpad.core.model.take.Take
 sealed interface LibraryState {
     val filter: SongFilter
     val disclosure: QualityDisclosureState
+    val nowPlaying: NowPlaying?
 
     data class Loading(override val filter: SongFilter = SongFilter.ALL) : LibraryState {
         override val disclosure get() = QualityDisclosureState.Hidden
+        override val nowPlaying get(): NowPlaying? = null
     }
 
     data class EmptyLibrary(override val disclosure: QualityDisclosureState) : LibraryState {
         override val filter get() = SongFilter.ALL
+        override val nowPlaying get(): NowPlaying? = null
     }
 
+    /** Unassigned takes are playable here too (§7.6 unified playback) — the only surface where Library itself,
+     * not a Song, is the playback context. */
     data class Populated(
         val songs: List<Song>,
         val unassignedTakes: List<Take>,
         override val disclosure: QualityDisclosureState,
+        override val nowPlaying: NowPlaying?,
     ) : LibraryState {
         override val filter get() = SongFilter.ALL
     }
@@ -35,6 +42,7 @@ sealed interface LibraryState {
         val songs: List<Song>,
         val unassignedTakes: List<Take>,
         override val disclosure: QualityDisclosureState,
+        override val nowPlaying: NowPlaying?,
     ) : LibraryState
 }
 

@@ -77,7 +77,7 @@ class SongViewModelsTest {
 
     private fun library() = LibraryViewModel(
         songs, takes, settings, CreateSongFromTakeUseCase(songs), AssignTakeToSongUseCase(takes, songs),
-        AudioRecoveryManager(takes), RecoverTakeUseCase(takes, transcodes, store.clock), Logger.Noop,
+        AudioRecoveryManager(takes), RecoverTakeUseCase(takes, transcodes, store.clock), playback, { FloatArray(0) }, Logger.Noop,
     )
     private fun detail() = SongDetailViewModel(
         songs, takes, lyrics, notes, playback, RenameTakeUseCase(takes),
@@ -143,7 +143,7 @@ class SongViewModelsTest {
         val recoveryManager = AudioRecoveryManager(takes)
         val vm = LibraryViewModel(
             songs, takes, settings, CreateSongFromTakeUseCase(songs), AssignTakeToSongUseCase(takes, songs),
-            recoveryManager, RecoverTakeUseCase(takes, transcodes, store.clock), Logger.Noop,
+            recoveryManager, RecoverTakeUseCase(takes, transcodes, store.clock), playback, { FloatArray(0) }, Logger.Noop,
         )
         subscribe(vm.state, vm.recoveryState)
         val real = OrphanedTake("orphan-1", TakePaths.pcm("orphan-1") + ".tmp", AudioFormat.BYTES_PER_MS * 5_000L, hasDbRow = false, hasEventsLog = true, songId = null)

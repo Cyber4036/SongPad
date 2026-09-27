@@ -44,12 +44,14 @@ import com.songpad.core.ui.components.SecondaryButton
 import com.songpad.core.ui.components.SectionHeader
 import com.songpad.core.ui.components.SongListItem
 import com.songpad.core.ui.components.SongPadBottomSheet
+import com.songpad.core.ui.components.RibbonPlayer
 import com.songpad.core.ui.components.SongPadTopBar
 import com.songpad.core.ui.components.TakeListItem
 import com.songpad.core.ui.components.TextInputDialog
 import com.songpad.core.ui.icons.SongPadIcons
 import com.songpad.core.ui.theme.SongPadTheme
 import com.songpad.core.ui.theme.Spacing
+import com.songpad.feature.song.detail.NowPlaying
 import java.text.DateFormat
 import java.util.Date
 
@@ -93,8 +95,15 @@ fun LibraryScreen(
                 body = "Tap Record to capture an idea. Name it when you save and it becomes your first song.",
                 actionLabel = "Record", onAction = onRecord, modifier = Modifier.weight(1f),
             )
-            is LibraryState.Populated -> SongList(s.songs, s.unassignedTakes, s.filter, onOpenSong, viewModel, Modifier.weight(1f))
-            is LibraryState.Filtered -> SongList(s.songs, s.unassignedTakes, s.filter, onOpenSong, viewModel, Modifier.weight(1f))
+            is LibraryState.Populated -> SongList(s.songs, s.unassignedTakes, s.nowPlaying, s.filter, onOpenSong, viewModel, Modifier.weight(1f))
+            is LibraryState.Filtered -> SongList(s.songs, s.unassignedTakes, s.nowPlaying, s.filter, onOpenSong, viewModel, Modifier.weight(1f))
+        }
+        state.nowPlaying?.let { np ->
+            RibbonPlayer(
+                title = np.take.name, subtitle = np.take.type.label(), isPlaying = np.isPlaying, progress = np.progress,
+                positionLabel = "${DurationFormat.mmss(np.positionMs)} / ${DurationFormat.mmss(np.durationMs)}", peaks = np.peaks,
+                onPlayPause = { viewModel.togglePlayPause(np.take) }, onSeek = viewModel::seekTo, onDismiss = viewModel::dismissPlayer,
+            )
         }
     }
 
@@ -170,7 +179,7 @@ private fun RecoveryBanner(state: AudioRecoveryManager.RecoveryState, vm: Librar
 }
 
 @Composable
-private fun SongList(songs: List<Song>, unassigned: List<Take>, filter: SongFilter, onOpenSong: (String) -> Unit, vm: LibraryViewModel, modifier: Modifier) {
+private fun SongList(songs: List<Song>, unassigned: List<Take>, nowPlaying: NowPlaying?, filter: SongFilter, onOpenSong: (String) -> Unit, vm: LibraryViewModel, modifier: Modifier) {
     val c = SongPadTheme.colors
     LazyColumn(modifier.fillMaxWidth()) {
         if (unassigned.isNotEmpty() && filter == SongFilter.ALL) {
@@ -179,8 +188,8 @@ private fun SongList(songs: List<Song>, unassigned: List<Take>, filter: SongFilt
                 TakeListItem(
                     name = take.name, typeLabel = take.type.label(), typeIcon = take.type.icon(),
                     durationLabel = DurationFormat.mmss(take.durationMs), metaLine = take.meta.createdAt.dateLabel(),
-                    statusBadge = take.statusBadge(), isPlaying = false,
-                    onClick = { vm.openAssignSheet(take) }, onPlay = { vm.openAssignSheet(take) },
+                    statusBadge = take.statusBadge(), isPlaying = nowPlaying?.take?.id == take.id && nowPlaying.isPlaying,
+                    onClick = { vm.openAssignSheet(take) }, onPlay = { vm.togglePlayPause(take) },
                     trailing = { SecondaryButton("Add to Song", onClick = { vm.openAssignSheet(take) }) },
                 )
             }
