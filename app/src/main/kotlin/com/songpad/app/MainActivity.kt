@@ -99,7 +99,17 @@ fun SongPadApp(viewModel: MainViewModel) {
         backStack.clear(); backStack.add(LibraryKey); if (key != LibraryKey) backStack.add(key)
     }
 
-    LaunchedEffect(Unit) { viewModel.deepLinkTargets.collect { target -> switchTopLevel(LibraryKey); if (target != LibraryKey) push(target) } }
+    // An external deep link rebuilds the stack as Library → target, except while a Record route is on the stack:
+    // clearing it would clear its ViewModel and strand a live take (a nudge can arrive mid-recording, since the
+    // capture FGS lets the user leave the app). Then the target is pushed on top instead.
+    LaunchedEffect(Unit) {
+        viewModel.deepLinkTargets.collect { target ->
+            when {
+                backStack.any { it is RecordKey } -> if (target != LibraryKey) push(target)
+                else -> { switchTopLevel(LibraryKey); if (target != LibraryKey) push(target) }
+            }
+        }
+    }
     LaunchedEffect(Unit) { viewModel.inAppTargets.collect { target -> if (target == LibraryKey) switchTopLevel(LibraryKey) else push(target) } }
 
     val current = backStack.lastOrNull() ?: LibraryKey

@@ -231,17 +231,37 @@ class SongDetailViewModel @Inject constructor(
         if (ui.editingNoteId != null) return@launch
         startRecording(TakeType.VOICE, id).report().onSuccess { session -> notesUi.value = NotesUi.Recording(ui.text, session) }
     }
-    fun cancelVoiceNote() = viewModelScope.launch {
-        val ui = notesUi.value as? NotesUi.Recording ?: return@launch
-        discardRecording().report()
-        notesUi.value = NotesUi.Composing(ui.text, null)
+    fun cancelVoiceNote() {
+        val ui = notesUi.value as? NotesUi.Recording ?: return
+        if (voiceNoteBusy) return
+        voiceNoteBusy = true
+        viewModelScope.launch {
+            try {
+                discardRecording().report()
+                notesUi.value = NotesUi.Composing(ui.text, null)
+            } finally { voiceNoteBusy = false }
+        }
     }
     /** Stopping IS sending, chat-message style — there is no separate "voice attached, not yet saved" state
-     * in §17's Notes hierarchy, so the recorded take commits straight into a saved Note. */
-    fun stopVoiceNote() = viewModelScope.launch {
-        val ui = notesUi.value as? NotesUi.Recording ?: return@launch
-        finalizeTake(ui.session, "Voice note", null).report().onSuccess { take -> createNote(ui.text, mediaUri = null, voiceTakeId = take.id) }
+     * in §17's Notes hierarchy, so the recorded take commits straight into a saved Note. [notesUi] stays
+     * Recording until the note is committed, so back stays swallowed (see [recordingVoiceNote]); the busy
+     * flag, set synchronously, makes a repeated back or tap during the commit a no-op instead of finalizing
+     * the same session twice. */
+    fun stopVoiceNote() {
+        val ui = notesUi.value as? NotesUi.Recording ?: return
+        if (voiceNoteBusy) return
+        voiceNoteBusy = true
+        viewModelScope.launch {
+            try {
+                finalizeTake(ui.session, "Voice note", null).report()
+                    .onSuccess { take -> createNote(ui.text, mediaUri = null, voiceTakeId = take.id) }
+                    // Don't trap the user in Recording (back is swallowed there). The .pcm.tmp stays on disk,
+                    // so the §9.4 recovery scan offers it back on next launch.
+                    .onFailure { notesUi.value = NotesUi.Composing(ui.text, null) }
+            } finally { voiceNoteBusy = false }
+        }
     }
+    private var voiceNoteBusy = false
 
     /** New note vs. editing an existing one are genuinely different operations, not the same call with some
      * fields zeroed out: [NoteRepository.update] is bodyText-only (§15 frozen contract), so there is no way to

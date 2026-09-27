@@ -33,10 +33,24 @@ Mechanics (`core/audio/src/main/cpp/sampler_tap.h`): a process-wide lock-free SP
 piano output callback writes each rendered buffer, and the capture input callback saturating-adds it onto the
 mic samples **before** they enter the capture ring buffer. Everything downstream therefore sees one mono
 signal: the PCM file, the waveform peaks, transcode and recovery. Both sides are real-time callbacks with no
-allocation, locks, logging or JNI. The tap is cleared each time it is enabled, and the capture side never
-lets it lag the piano by more than 20 ms: excess is dropped rather than written late into the file. Both
-streams are 48 kHz mono I16 (ADR-0023). If they drift, the tap under- or over-runs by a few samples, which is
-inaudible at this scale and bounded by the lag cap.
+allocation, locks, logging or JNI.
+
+The two callbacks run on independent schedules with different burst sizes. An Exclusive piano stream may
+deliver ~96 frames per call against a Shared capture fallback's 960, and Bluetooth A2DP output commonly
+renders 1024–2048 frames at a time. The tap is therefore a small jitter buffer:
+
+- The consumer waits for a target fill before mixing. The target is 2× the largest burst observed on either
+  side, clamped to 10–170 ms. It is based on observed callback sizes, not `getFramesPerBurst()`, which doesn't
+  reflect A2DP chunking.
+- It re-primes after an underrun.
+- It trims any backlog beyond target plus two bursts, so the piano never drifts late in the file.
+- The tap is cleared, and the burst statistics reset, each time mixing is enabled.
+
+A host simulation under ASan/UBSan (scratch harness, not committed, because tests were out of scope for this
+pass) covered producer bursts of 96–1920 and consumer bursts of 96–960 with up to 5 ms of callback jitter and
+±50 ppm clock skew. Over 120 s, the piano ramp came out sample-contiguous in every case after priming. Priming
+takes 12–100 ms. The piano sits in the file 12–40 ms behind render time on wired routes and up to ~125 ms behind
+on A2DP-sized bursts. Only an extreme 200 ppm skew caused brief re-primes.
 
 ## Why only on headphones
 
@@ -51,6 +65,11 @@ comb-filtered piano. On the speaker route the original model is already correct,
 - **Bluetooth latency.** On A2DP the user hears the piano 150–250 ms after the key press and tends to sing
   against that late sound. The file carries the piano at render time, so the voice may sit slightly behind it
   on playback. That is inherent in Bluetooth monitoring. Wired headphones don't have it.
+- **Bluetooth speakers** (car audio, portable speakers) report the same A2DP device type as Bluetooth headphones,
+  so on those routes the piano will be doubled (mixed plus heard acoustically). The device type can't tell them
+  apart. Accepted as a residual.
+- The jitter buffer adds 12–40 ms (wired) to ~125 ms (Bluetooth bursts) of lag to the piano in the file,
+  relative to render time. On Bluetooth that partly offsets the voice lag described above.
 - Voice-only takes are unaffected: the sampler is never armed for `TakeType.VOICE`.
 - The MIDI sidecar is unchanged and still the frame-clock-aligned record of the performance (§8.3).
 
@@ -69,5 +88,7 @@ comb-filtered piano. On the speaker route the original model is already correct,
 
 The build compiles and links for all ABIs. It has **not been run on a device**. Before beta it needs a manual
 check on the Pixel 4a and Tecno Spark 8 with wired and Bluetooth headphones: the piano is audible in the saved
-take, is not doubled on the speaker route, and the voice-to-piano alignment is acceptable by ear (spec §18,
+take, is not doubled on the speaker route, the voice-to-piano alignment is acceptable by ear, and the level
+balance works: the mix is digital full-scale against an `Unprocessed` mic, so the piano may sit too loud over the
+voice (spec §18,
 "only a person can confirm the result is musical").

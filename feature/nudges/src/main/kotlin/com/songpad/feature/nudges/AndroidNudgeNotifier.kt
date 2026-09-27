@@ -1,6 +1,7 @@
 package com.songpad.feature.nudges
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -50,7 +51,10 @@ class AndroidNudgeNotifier @Inject constructor(@ApplicationContext private val c
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
-        return runCatching { manager.notify(nudge.id.hashCode(), notification); true }.getOrDefault(false)
+        // POST_NOTIFICATIONS is checked at the top of this function; lint can't follow the SDK_INT-guarded check.
+        @SuppressLint("MissingPermission")
+        val posted = runCatching { manager.notify(nudge.id.hashCode(), notification); true }.getOrDefault(false)
+        return posted
     }
 
     private fun ensureChannel() {

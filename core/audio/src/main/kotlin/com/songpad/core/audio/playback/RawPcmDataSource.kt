@@ -1,5 +1,7 @@
 package com.songpad.core.audio.playback
 
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import android.net.Uri
 import androidx.media3.common.C
 import androidx.media3.datasource.BaseDataSource
@@ -17,6 +19,7 @@ import java.nio.ByteOrder
  * fields reflect the file length at open time, which for an in-flight `.pcm.tmp` is "what exists so far" —
  * exactly the review-before-save semantics.
  */
+@OptIn(UnstableApi::class)
 class RawPcmDataSource(private val files: TakeFileStore, private val upstream: DataSource) : BaseDataSource(false) {
     private var header: ByteArray = ByteArray(0)
     private var raf: RandomAccessFile? = null

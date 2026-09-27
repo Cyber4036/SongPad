@@ -1,5 +1,7 @@
 package com.songpad.core.audio.playback
 
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
@@ -34,6 +36,7 @@ import javax.inject.Singleton
  * fight over audio focus. Plays `.m4a`, `.flac`, committed `.pcm` and the in-flight `.pcm.tmp` (raw PCM is
  * wrapped in a synthesized WAV header by [RawPcmDataSource], since the format is a fixed constant §7.3).
  */
+@OptIn(UnstableApi::class)
 @Singleton
 class Media3PlaybackController @Inject constructor(
     @ApplicationContext private val context: Context,
