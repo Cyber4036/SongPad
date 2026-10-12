@@ -12,6 +12,7 @@ class CreateSongFromTakeUseCase(private val songs: SongRepository) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return domainFailure(DataError.InvalidInput("Give the song a name."))
         if (trimmed.length > MAX_NAME) return domainFailure(DataError.InvalidInput("Song names are limited to $MAX_NAME characters."))
+        if (songs.nameExists(trimmed)) return domainFailure(DataError.InvalidInput("A song with that name already exists."))
         return songs.create(trimmed, takeId)
     }
 

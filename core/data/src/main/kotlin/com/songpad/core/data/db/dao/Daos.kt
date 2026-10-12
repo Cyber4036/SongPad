@@ -36,6 +36,8 @@ interface SongDao {
     @Query("SELECT id FROM song WHERE deleted = 1 AND deleted_at < :cutoff") suspend fun purgeCandidates(cutoff: Long): List<String>
     @Query("DELETE FROM song WHERE id = :id") suspend fun hardDelete(id: String)
     @Query("SELECT COUNT(*) FROM song WHERE deleted = 0") suspend fun count(): Int
+    @Query("SELECT COUNT(*) FROM song WHERE deleted = 0 AND LOWER(name) = LOWER(:name) AND (:excludeId IS NULL OR id != :excludeId)")
+    suspend fun nameCount(name: String, excludeId: String? = null): Int
 }
 
 @Dao

@@ -81,6 +81,7 @@ fun RecordScreen(
         viewModel.effects.collect { effect ->
             when (effect) {
                 is CaptureEffect.NavigateToSong -> onNavigateToSong(effect.songId)
+                CaptureEffect.Finished -> onClose()
                 CaptureEffect.RequestMicrophonePermission -> requester.request()
                 CaptureEffect.OpenAppSettings -> MicrophonePermission.openAppSettings(context)
                 is CaptureEffect.Message -> android.widget.Toast.makeText(context, effect.text, android.widget.Toast.LENGTH_SHORT).show()
@@ -130,7 +131,6 @@ fun RecordContent(
     onRequestPermission: () -> Unit,
 ) {
     val c = SongPadTheme.colors
-    var showSaveDialog by rememberSaveable { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
         SongPadTopBar(
@@ -199,21 +199,10 @@ fun RecordContent(
         }
 
         Transport(state, dispatch, onSave = {
-            if (state.songId == null) showSaveDialog = true
-            else dispatch(CaptureIntent.Save(takeName = "", newSongName = null))
+            dispatch(CaptureIntent.Save(takeName = "", newSongName = null))
         })
     }
 
-    if (showSaveDialog) {
-        TextInputDialog(
-            title = "Name your song",
-            label = "Song name",
-            initialValue = "",
-            confirmLabel = "Save",
-            onConfirm = { name -> showSaveDialog = false; dispatch(CaptureIntent.Save(takeName = "", newSongName = name)) },
-            onDismiss = { showSaveDialog = false },
-        )
-    }
     val confirmDiscard = when (state) {
         is CaptureState.Paused -> state.confirmDiscard
         is CaptureState.Reviewing -> state.confirmDiscard

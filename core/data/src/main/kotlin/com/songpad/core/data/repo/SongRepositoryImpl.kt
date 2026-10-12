@@ -6,6 +6,7 @@ import com.songpad.core.data.db.entity.SongEntity
 import com.songpad.core.model.data.SongRepository
 import com.songpad.core.model.error.DataError
 import com.songpad.core.model.error.DomainException
+import com.songpad.core.model.error.domainFailure
 import com.songpad.core.model.error.runDomain
 import com.songpad.core.model.id.IdGenerator
 import com.songpad.core.model.song.Song
@@ -67,7 +68,12 @@ class SongRepositoryImpl @Inject constructor(
 
     override suspend fun setStatus(songId: String, status: SongStatus): Result<Unit> = mutate(songId) { it.copy(status = status.name) }
     override suspend fun toggleFavorite(songId: String): Result<Unit> = mutate(songId) { it.copy(isFavorite = if (it.isFavorite == 1) 0 else 1) }
-    override suspend fun rename(songId: String, name: String): Result<Unit> = mutate(songId) { it.copy(name = name.trim()) }
+    override suspend fun rename(songId: String, name: String): Result<Unit> {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return domainFailure(DataError.InvalidInput("Give the song a name."))
+        if (nameExists(trimmed, excludeId = songId)) return domainFailure(DataError.InvalidInput("A song with that name already exists."))
+        return mutate(songId) { it.copy(name = trimmed) }
+    }
 
     override suspend fun softDelete(songId: String): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
         val s = songs.get(songId) ?: throw DomainException(DataError.NotFound("Song", songId))
@@ -75,6 +81,9 @@ class SongRepositoryImpl @Inject constructor(
     }
 
     override suspend fun getSong(songId: String): Song? = songs.get(songId)?.toDomain()
+
+    override suspend fun nameExists(name: String, excludeId: String?): Boolean =
+        songs.nameCount(name.trim(), excludeId) > 0
 
     private suspend fun mutate(songId: String, f: (SongEntity) -> SongEntity): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
         val s = songs.get(songId) ?: throw DomainException(DataError.NotFound("Song", songId))

@@ -244,7 +244,12 @@ class CaptureViewModel @Inject constructor(
         finalizeTake(session, takeName, newSongName)
             .onSuccess { take ->
                 reduce { CaptureState.Saved(take) }
-                take.songId?.let { emit(CaptureEffect.NavigateToSong(it)) }
+                val targetSongId = take.songId
+                if (targetSongId != null) {
+                    emit(CaptureEffect.NavigateToSong(targetSongId))
+                } else {
+                    emit(CaptureEffect.Finished)
+                }
             }
             .onFailure { t ->
                 val error = t.domainError

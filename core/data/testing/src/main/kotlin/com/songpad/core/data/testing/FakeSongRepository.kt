@@ -46,8 +46,15 @@ class FakeSongRepository(val store: InMemoryStore = InMemoryStore()) : SongRepos
     override suspend fun setStatus(songId: String, status: SongStatus): Result<Unit> = mutate(songId) { it.copy(status = status) }
     override suspend fun toggleFavorite(songId: String): Result<Unit> = mutate(songId) { it.copy(isFavorite = !it.isFavorite) }
     override suspend fun softDelete(songId: String): Result<Unit> = mutate(songId) { it.copy(meta = it.meta.softDeleted(store.clock.nowMillis())) }
-    override suspend fun rename(songId: String, name: String): Result<Unit> = mutate(songId) { it.copy(name = name) }
+    override suspend fun rename(songId: String, name: String): Result<Unit> {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return domainFailure(DataError.InvalidInput("Give the song a name."))
+        if (nameExists(trimmed, excludeId = songId)) return domainFailure(DataError.InvalidInput("A song with that name already exists."))
+        return mutate(songId) { it.copy(name = trimmed) }
+    }
     override suspend fun getSong(songId: String): Song? = store.songs.value[songId]?.takeIf { !it.meta.deleted }
+    override suspend fun nameExists(name: String, excludeId: String?): Boolean =
+        store.songs.value.values.any { !it.meta.deleted && it.name.equals(name.trim(), ignoreCase = true) && (excludeId == null || it.id != excludeId) }
 
     private fun mutate(songId: String, f: (Song) -> Song): Result<Unit> {
         val s = store.songs.value[songId] ?: return domainFailure(DataError.NotFound("Song", songId))

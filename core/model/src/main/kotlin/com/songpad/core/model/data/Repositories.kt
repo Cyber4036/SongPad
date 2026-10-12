@@ -51,6 +51,7 @@ interface SongRepository {
     // ── Non-frozen additions. ──
     suspend fun rename(songId: String, name: String): Result<Unit>
     suspend fun getSong(songId: String): Song?
+    suspend fun nameExists(name: String, excludeId: String? = null): Boolean
 }
 
 interface SearchEngine {

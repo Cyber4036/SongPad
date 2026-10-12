@@ -108,6 +108,9 @@ class UseCaseTest {
         assertThat(takes.getTake(take.id)!!.songId).isEqualTo(other.id)
 
         assertThat(CreateSongFromTakeUseCase(songs)("   ", null).domainErrorOrNull()).isInstanceOf(DataError.InvalidInput::class.java)
+        val duplicateErr = CreateSongFromTakeUseCase(songs)("new song", null).domainErrorOrNull()
+        assertThat(duplicateErr).isInstanceOf(DataError.InvalidInput::class.java)
+        assertThat((duplicateErr as DataError.InvalidInput).message).contains("already exists")
         assertThat(AssignTakeToSongUseCase(takes, songs)(take.id, "nope").domainErrorOrNull()).isInstanceOf(DataError.NotFound::class.java)
     }
 

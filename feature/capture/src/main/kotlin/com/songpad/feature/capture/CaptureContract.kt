@@ -115,5 +115,6 @@ sealed interface CaptureEffect {
     data object RequestMicrophonePermission : CaptureEffect
     data object OpenAppSettings : CaptureEffect
     data class Message(val text: String) : CaptureEffect
+    data object Finished : CaptureEffect
 }
 

@@ -244,4 +244,15 @@ class CaptureViewModelTest {
         assertThat(vm.state.value).isInstanceOf(CaptureState.Ready::class.java)
         assertThat(engine.state.value).isEqualTo(RecordingState.Idle)
     }
+
+    @Test
+    fun `saving a loose take emits Finished effect`() = runVm {
+        granted()
+        vm.dispatch(CaptureIntent.Start); dispatcher.scheduler.advanceUntilIdle()
+        engine.simulateFrames(48_000 * 2); dispatcher.scheduler.advanceUntilIdle()
+        vm.dispatch(CaptureIntent.Save(takeName = "Loose riff", newSongName = null)); dispatcher.scheduler.advanceUntilIdle()
+        val saved = vm.state.value as CaptureState.Saved
+        assertThat(saved.take.songId).isNull()
+        assertThat(effects).contains(CaptureEffect.Finished)
+    }
 }
