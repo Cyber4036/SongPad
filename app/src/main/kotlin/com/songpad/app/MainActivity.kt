@@ -50,13 +50,19 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 
 @HiltViewModel
 class MainViewModel @Inject constructor(settings: SettingsRepository, private val deepLinks: DeepLinkResolver) : ViewModel() {
-    val themeVariant: StateFlow<String?> = settings.themeVariant.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val themeVariant: StateFlow<String?> = settings.themeVariant.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        runBlocking { settings.themeVariant.first() },
+    )
     /** External entry (notification / VIEW intent): the back stack is rebuilt as Library → target. */
     val deepLinkTargets = MutableSharedFlow<NavKey>(extraBufferCapacity = 1)
     /** In-app navigation: the target is pushed, so back returns to where the user tapped. */

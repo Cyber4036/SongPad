@@ -73,4 +73,12 @@ class MainViewModelTest {
 
         assertThat(targets).containsExactly(LibraryKey)
     }
+
+    @Test
+    fun `themeVariant is seeded with persisted value on creation`() = runTest(dispatcher) {
+        val settings = FakeSettingsRepository()
+        settings.setThemeVariant("MELODY_DARK")
+        val vm = MainViewModel(settings, DeepLinkResolver(songs, takes))
+        assertThat(vm.themeVariant.value).isEqualTo("MELODY_DARK")
+    }
 }
