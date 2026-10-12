@@ -24,8 +24,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -68,7 +70,9 @@ class OboeAudioRecorderEngine @Inject constructor(
 
     override fun frameIndexFor(eventTimeNanos: Long): Long = clockMapping.frameIndexFor(eventTimeNanos)
 
-    override suspend fun start(config: CaptureConfig): Result<Unit> = mutex.withLock {
+    override suspend fun start(config: CaptureConfig): Result<Unit> = withContext(Dispatchers.IO) { startImpl(config) }
+
+    private suspend fun startImpl(config: CaptureConfig): Result<Unit> = mutex.withLock {
         if (_state.value !is RecordingState.Idle) return domainFailure(CaptureError.AlreadyRecording)
         if (!focus.request(onLoss = ::onFocusLoss)) return domainFailure(CaptureError.AudioFocusNotGranted)
 
@@ -97,14 +101,18 @@ class OboeAudioRecorderEngine @Inject constructor(
         Result.success(Unit)
     }
 
-    override suspend fun pause(): Result<Unit> = mutex.withLock {
+    override suspend fun pause(): Result<Unit> = withContext(Dispatchers.IO) { pauseImpl() }
+
+    private suspend fun pauseImpl(): Result<Unit> = mutex.withLock {
         val s = _state.value as? RecordingState.Recording ?: return domainFailure(CaptureError.NotRecording)
         native?.pause(); thread?.setPaused(true)
         _state.value = RecordingState.Paused(s.elapsedMs)
         Result.success(Unit)
     }
 
-    override suspend fun resume(): Result<Unit> = mutex.withLock {
+    override suspend fun resume(): Result<Unit> = withContext(Dispatchers.IO) { resumeImpl() }
+
+    private suspend fun resumeImpl(): Result<Unit> = mutex.withLock {
         when (_state.value) {
             is RecordingState.Paused, is RecordingState.Interrupted -> Unit
             else -> return domainFailure(CaptureError.NotRecording)
@@ -131,7 +139,9 @@ class OboeAudioRecorderEngine @Inject constructor(
     }
 
     /** §7.3: stop → drain → flush → fsync → rename `.tmp` → `.pcm`. The presence of `audio.pcm` is the commit marker. */
-    override suspend fun stopAndCommit(takeId: String): Result<CapturedAudio> = mutex.withLock {
+    override suspend fun stopAndCommit(takeId: String): Result<CapturedAudio> = withContext(Dispatchers.IO) { stopAndCommitImpl(takeId) }
+
+    private suspend fun stopAndCommitImpl(takeId: String): Result<CapturedAudio> = mutex.withLock {
         if (_state.value is RecordingState.Idle) return domainFailure(CaptureError.NothingCaptured)
         val cfg = config ?: return domainFailure(CaptureError.NotRecording)
         native?.pause()
@@ -151,7 +161,9 @@ class OboeAudioRecorderEngine @Inject constructor(
         Result.success(CapturedAudio(takeId, TakePaths.pcm(cfg.takeId), frames, AudioFormat.bytesForFrames(frames), TakePaths.peaks(cfg.takeId)))
     }
 
-    override suspend fun discard(): Result<Unit> = mutex.withLock {
+    override suspend fun discard(): Result<Unit> = withContext(Dispatchers.IO) { discardImpl() }
+
+    private suspend fun discardImpl(): Result<Unit> = mutex.withLock {
         teardown(deleteFile = true)
         Result.success(Unit)
     }
