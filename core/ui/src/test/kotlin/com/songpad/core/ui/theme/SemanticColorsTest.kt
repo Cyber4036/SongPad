@@ -13,9 +13,9 @@ class SemanticColorsTest {
 
     private val table = listOf(
         Row(ThemeVariant.SONGPAD_LIGHT, "#F5EAD8", "#EBDDC5", "#201E1D", "#C67139", "#7A8A5E", "#C67139"),
-        Row(ThemeVariant.SONGPAD_DARK, "#1B1815", "#2A2621", "#F4EBDD", "#E08A4C", "#2B3122", "#E08A4C"),
+        Row(ThemeVariant.SONGPAD_DARK, "#1B1815", "#38322B", "#F4EBDD", "#E08A4C", "#2B3122", "#E08A4C"),
         Row(ThemeVariant.MELODY_LIGHT, "#E9E0FA", "#FDFAFF", "#1C1233", "#7B2FF7", "#00B3C8", "#FF3355"),
-        Row(ThemeVariant.MELODY_DARK, "#0D0718", "#1A0F2E", "#F3EBFF", "#B46BFF", "#2EE6F5", "#FF5A7A"),
+        Row(ThemeVariant.MELODY_DARK, "#0D0718", "#2A1D47", "#F3EBFF", "#B46BFF", "#2EE6F5", "#FF5A7A"),
     )
 
     @Test

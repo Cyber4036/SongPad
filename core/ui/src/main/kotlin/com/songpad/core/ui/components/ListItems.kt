@@ -1,5 +1,6 @@
 package com.songpad.core.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,7 +41,7 @@ fun SongListItem(
     modifier: Modifier = Modifier,
 ) {
     val c = SongPadTheme.colors
-    Surface(onClick = onClick, shape = RoundedCornerShape(Radii.md), color = c.surface, contentColor = c.text, modifier = modifier.fillMaxWidth()) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(Radii.md), color = c.surface, contentColor = c.text, border = BorderStroke(1.dp, c.divider), modifier = modifier.fillMaxWidth()) {
         Row(
             Modifier.defaultMinSize(minHeight = Dimens.listItemMinHeight).padding(start = Spacing.lg, end = Spacing.xs, top = Spacing.sm, bottom = Spacing.sm),
             verticalAlignment = Alignment.CenterVertically,
@@ -77,7 +78,7 @@ fun TakeListItem(
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = SongPadTheme.colors
-    Surface(onClick = onClick, shape = RoundedCornerShape(Radii.md), color = c.surface, contentColor = c.text, modifier = modifier.fillMaxWidth()) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(Radii.md), color = c.surface, contentColor = c.text, border = BorderStroke(1.dp, c.divider), modifier = modifier.fillMaxWidth()) {
         Row(
             Modifier.defaultMinSize(minHeight = Dimens.listItemMinHeight).padding(start = Spacing.sm, end = Spacing.xs, top = Spacing.sm, bottom = Spacing.sm),
             verticalAlignment = Alignment.CenterVertically,
@@ -117,6 +118,7 @@ fun SettingRow(title: String, subtitle: String?, onClick: (() -> Unit)?, modifie
         color = c.surface,
         contentColor = c.text,
         shape = RoundedCornerShape(Radii.md),
+        border = BorderStroke(1.dp, c.divider),
         modifier = modifier.fillMaxWidth(),
     ) {
         Row(Modifier.defaultMinSize(minHeight = Dimens.listItemMinHeight).padding(horizontal = Spacing.lg, vertical = Spacing.md), verticalAlignment = Alignment.CenterVertically) {

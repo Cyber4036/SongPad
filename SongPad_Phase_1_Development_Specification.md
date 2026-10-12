@@ -723,7 +723,7 @@ Four themes from two personalities (Phase 0 §17): SongPad (organic/warm) and Me
 | Token | SongPad Light | SongPad Dark | MelodyStudio Light | MelodyStudio Dark | Used by |
 | --- | --- | --- | --- | --- | --- |
 | `bg` | `#F5EAD8` | `#1B1815` | `#E9E0FA` | `#0D0718` | Scaffold |
-| `surface` | `#EBDDC5` | `#2A2621` | `#FDFAFF` | `#1A0F2E` | Cards, sheets |
+| `surface` | `#EBDDC5` | `#38322B` | `#FDFAFF` | `#2A1D47` | Cards, sheets |
 | `text` | `#201E1D` | `#F4EBDD` | `#1C1233` | `#F3EBFF` | Type, icons |
 | `accent` | `#C67139` | `#E08A4C` | `#7B2FF7` | `#B46BFF` | Actions, active waveform |
 | `accent-2` | `#7A8A5E` | `#2B3122` | `#00B3C8` | `#2EE6F5` | Tags, status badges |

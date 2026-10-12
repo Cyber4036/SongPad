@@ -24,7 +24,7 @@ internal object Palette {
 
     object SongPadDark {
         val bg = Color(0xFF1B1815)
-        val surface = Color(0xFF2A2621)
+        val surface = Color(0xFF38322B)
         val text = Color(0xFFF4EBDD)
         val neutral = Ramp(Color(0xFFE6DCCD), Color(0xFF332E28), Color(0xFF3D372F), Color(0xFF5D5449), Color(0xFFA79B8A), Color(0xFFC7BBA8), Color(0xFFE6DCCD), Color(0xFFF4EBDD))
         val accent = Ramp(Color(0xFFE08A4C), Color(0xFF3A2517), Color(0xFF4A2E1B), Color(0xFFF0A468), Color(0xFFF0A468), Color(0xFFF6BD8D), Color(0xFFF7CBA4), Color(0xFFFBE0C8))
@@ -48,7 +48,7 @@ internal object Palette {
 
     object MelodyDark {
         val bg = Color(0xFF0D0718)
-        val surface = Color(0xFF1A0F2E)
+        val surface = Color(0xFF2A1D47)
         val text = Color(0xFFF3EBFF)
         val neutral = Ramp(Color(0xFFE6D9FF), Color(0xFF241640), Color(0xFF2E1D4F), Color(0xFF4E3480), Color(0xFFA992D6), Color(0xFFCDBCF0), Color(0xFFE6D9FF), Color(0xFFF3EBFF))
         val accent = Ramp(Color(0xFFB46BFF), Color(0xFF2A1550), Color(0xFF3A1D6E), Color(0xFFA06BFA), Color(0xFFC98CFF), Color(0xFFDCB0FF), Color(0xFFEAD0FF), Color(0xFFF5E8FF))
