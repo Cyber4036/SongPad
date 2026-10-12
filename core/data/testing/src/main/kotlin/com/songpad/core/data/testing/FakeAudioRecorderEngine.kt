@@ -46,8 +46,11 @@ class FakeAudioRecorderEngine : AudioRecorderEngine {
         return Result.success(Unit)
     }
 
+    var failResumeWith: DomainError? = null
+
     override suspend fun resume(): Result<Unit> {
         calls += "resume"
+        failResumeWith?.let { return domainFailure(it) }
         val elapsed = when (val s = state.value) {
             is RecordingState.Paused -> s.elapsedMs
             is RecordingState.Interrupted -> AudioFormat.framesToMs(framesWritten.value)

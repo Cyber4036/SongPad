@@ -113,7 +113,7 @@ class CaptureViewModel @Inject constructor(
 
     fun dispatch(intent: CaptureIntent) = store.dispatch(intent)
 
-    override fun onCleared() = piano.release()
+    override fun onCleared() = piano.disarm()
 
     private suspend fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.handle(intent: CaptureIntent) {
         when (intent) {
@@ -192,7 +192,10 @@ class CaptureViewModel @Inject constructor(
         if (playback.state.value.sourceOrNull?.takeId == session.takeId) playback.stop()
         engine.resume()
             .onSuccess { reduce { CaptureState.Recording(session, elapsedMsOf(current)) } }
-            .onFailure { t -> reduce { failedState(t.domainError, session.type, session.songId) } }
+            .onFailure { t ->
+                logger.error(TAG, t.domainError)
+                emit(CaptureEffect.Message("Couldn't resume. Try again or save what you have."))
+            }
     }
 
     private fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.playReview() {
@@ -275,6 +278,7 @@ class CaptureViewModel @Inject constructor(
     private suspend fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.reset() {
         val s = current
         val mode = settings.qualityMode.first()
+        if (engine.state.value !is RecordingState.Idle) discardRecording()
         reduce { CaptureState.Ready(s.type, s.songId ?: initialSongId, PermissionState.Granted.takeIf { s !is CaptureState.PermissionDenied } ?: PermissionState.Unknown, mode) }
     }
 

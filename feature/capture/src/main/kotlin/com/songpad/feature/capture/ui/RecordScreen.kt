@@ -83,7 +83,7 @@ fun RecordScreen(
                 is CaptureEffect.NavigateToSong -> onNavigateToSong(effect.songId)
                 CaptureEffect.RequestMicrophonePermission -> requester.request()
                 CaptureEffect.OpenAppSettings -> MicrophonePermission.openAppSettings(context)
-                is CaptureEffect.Message -> Unit
+                is CaptureEffect.Message -> android.widget.Toast.makeText(context, effect.text, android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -95,6 +95,10 @@ fun RecordScreen(
     val close = {
         when {
             state is CaptureState.Saving -> Unit
+            state is CaptureState.Failed -> {
+                viewModel.dispatch(CaptureIntent.Reset)
+                onClose()
+            }
             takeOpen -> viewModel.dispatch(CaptureIntent.RequestDiscard)
             else -> onClose()
         }

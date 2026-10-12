@@ -61,13 +61,15 @@ int32_t CaptureEngine::open() {
 int32_t CaptureEngine::start() {
     if (!stream_) return static_cast<int32_t>(oboe::Result::ErrorClosed);
     capturing_.store(true, std::memory_order_release);
+    auto st = stream_->getState();
+    if (st == oboe::StreamState::Started || st == oboe::StreamState::Starting)
+        return static_cast<int32_t>(oboe::Result::OK);
     return static_cast<int32_t>(stream_->requestStart());
 }
 
 int32_t CaptureEngine::pause() {
     capturing_.store(false, std::memory_order_release);
-    if (!stream_) return static_cast<int32_t>(oboe::Result::OK);
-    return static_cast<int32_t>(stream_->requestPause());
+    return static_cast<int32_t>(oboe::Result::OK);
 }
 
 void CaptureEngine::close() {

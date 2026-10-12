@@ -116,8 +116,16 @@ class OboeAudioRecorderEngine @Inject constructor(
             nc.closeStream(); val rc = nc.open(); if (rc != 0) return domainFailure(CaptureError.StreamOpenFailed("reopen result $rc"))
         }
         thread?.setPaused(false)
-        val rc = nc.start()
-        if (rc != 0) return domainFailure(CaptureError.StreamOpenFailed("resume result $rc"))
+        var rc = nc.start()
+        if (rc != 0) {
+            nc.closeStream()
+            rc = nc.open()
+            if (rc == 0) rc = nc.start()
+        }
+        if (rc != 0) {
+            thread?.setPaused(true)
+            return domainFailure(CaptureError.StreamOpenFailed("resume result $rc"))
+        }
         _state.value = RecordingState.Recording(elapsedMs())
         Result.success(Unit)
     }

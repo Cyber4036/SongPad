@@ -125,10 +125,7 @@ class PianoSamplerEngineImpl @Inject constructor(
     override fun noteOn(note: Int, velocity: Int) = native.noteOn(note, velocity)
     override fun noteOff(note: Int) = native.noteOff(note)
 
-    override fun release() {
-        stopRouteWatch()
-        native.close()
-    }
+    override fun release() = disarm()   // never destroy a singleton's native handle; samples stay loaded by design
 
     companion object {
         private const val ASSETS_DIR = "piano"

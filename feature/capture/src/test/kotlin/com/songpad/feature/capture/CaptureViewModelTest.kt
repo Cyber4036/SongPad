@@ -13,6 +13,7 @@ import com.songpad.core.data.testing.FakeTranscodeScheduler
 import com.songpad.core.data.testing.InMemoryStore
 import com.songpad.core.model.audio.InterruptionReason
 import com.songpad.core.model.audio.PlaybackSource
+import com.songpad.core.model.audio.RecordingState
 import com.songpad.core.model.error.CaptureError
 import com.songpad.core.model.state.PermissionState
 import com.songpad.core.model.take.TakeStatus
@@ -215,5 +216,32 @@ class CaptureViewModelTest {
         val saved = vm.state.value as CaptureState.Saved
         assertThat(saved.take.songId).isEqualTo(song.id)
         assertThat(saved.take.name).isEqualTo("Bridge idea")
+    }
+
+    @Test
+    fun `failed resume stays paused and emits user message`() = runVm {
+        granted()
+        vm.dispatch(CaptureIntent.Start); dispatcher.scheduler.advanceUntilIdle()
+        vm.dispatch(CaptureIntent.Pause); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(vm.state.value).isInstanceOf(CaptureState.Paused::class.java)
+
+        engine.failResumeWith = CaptureError.StreamOpenFailed("resume failed")
+        vm.dispatch(CaptureIntent.Resume); dispatcher.scheduler.advanceUntilIdle()
+
+        assertThat(vm.state.value).isInstanceOf(CaptureState.Paused::class.java)
+        val msg = effects.filterIsInstance<CaptureEffect.Message>().single()
+        assertThat(msg.text).contains("Couldn't resume")
+    }
+
+    @Test
+    fun `reset discards non-idle engine`() = runVm {
+        granted()
+        vm.dispatch(CaptureIntent.Start); dispatcher.scheduler.advanceUntilIdle()
+        vm.dispatch(CaptureIntent.Pause); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(engine.state.value).isInstanceOf(RecordingState.Paused::class.java)
+
+        vm.dispatch(CaptureIntent.Reset); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(vm.state.value).isInstanceOf(CaptureState.Ready::class.java)
+        assertThat(engine.state.value).isEqualTo(RecordingState.Idle)
     }
 }
