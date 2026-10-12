@@ -17,9 +17,11 @@ import com.songpad.core.model.note.NoteDraft
 import com.songpad.core.model.note.NoteValidation
 import com.songpad.core.model.song.SongDetail
 import com.songpad.core.model.song.SongStatusTransitions
+import com.songpad.core.model.song.SongFilter
 import com.songpad.core.model.take.Take
 import com.songpad.core.model.take.TakeStatus
 import com.songpad.core.model.take.TakeType
+import com.songpad.core.model.usecase.AssignTakeToSongUseCase
 import com.songpad.core.model.usecase.CaptureSession
 import com.songpad.core.model.usecase.DiscardRecordingUseCase
 import com.songpad.core.model.usecase.FinalizeTakeUseCase
@@ -39,6 +41,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -64,6 +67,7 @@ class SongDetailViewModel @Inject constructor(
     private val discardRecording: DiscardRecordingUseCase,
     private val peaksLoader: PeaksLoader,
     private val logger: Logger,
+    private val assignTakeToSong: AssignTakeToSongUseCase = AssignTakeToSongUseCase(takes, songs),
 ) : ViewModel() {
 
     private val songId = MutableStateFlow<String?>(null)
@@ -129,6 +133,20 @@ class SongDetailViewModel @Inject constructor(
     fun setTakeFilter(f: TakeFilter) { takeFilter.value = f }
     fun showDialog(d: SongDetailDialog) { _dialog.value = d }
     fun closeDialog() { _dialog.value = SongDetailDialog.None }
+
+    fun openMoveTakeDialog(take: Take) {
+        viewModelScope.launch {
+            val currentId = songId.value
+            val allSongs = songs.observeSongs(SongFilter.ALL).first().filter { it.id != currentId }
+            _dialog.value = SongDetailDialog.MoveTake(take, allSongs)
+        }
+    }
+
+    fun moveTake(takeId: String, targetSongId: String) {
+        viewModelScope.launch {
+            assignTakeToSong(takeId, targetSongId).report().onSuccess { closeDialog() }
+        }
+    }
 
     // ── Song ──
     fun toggleFinished() = mutateSong { songs.setStatus(it.song.id, SongStatusTransitions.toggleFinished(it.song.status)) }

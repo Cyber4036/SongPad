@@ -75,6 +75,7 @@ sealed interface SongDetailDialog {
     data object None : SongDetailDialog
     data object RenameSong : SongDetailDialog
     data class RenameTake(val take: Take) : SongDetailDialog
+    data class MoveTake(val take: Take, val songs: List<Song>) : SongDetailDialog
     data class ConfirmDeleteTake(val take: Take) : SongDetailDialog
     data class ConfirmDeleteSection(val sectionId: String, val label: String) : SongDetailDialog
     data class ConfirmDeleteNote(val noteId: String) : SongDetailDialog

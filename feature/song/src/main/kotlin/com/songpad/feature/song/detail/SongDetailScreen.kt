@@ -44,9 +44,11 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -137,42 +139,68 @@ fun SongDetailScreen(
             SongPadTopBar(title = null, onBack = onBack)
             EmptyState(SongPadIcons.MusicNote, "This song is gone", "It may have been deleted.", actionLabel = "Back to library", onAction = onBack)
         }
-        is SongDetailState.Loaded -> Column(Modifier.fillMaxSize()) {
-            var menu by remember { mutableStateOf(false) }
-            SongPadTopBar(title = s.song.name, onBack = { guardedBack() }) {
-                IconAction(if (s.song.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favorite", onClick = viewModel::toggleFavorite, tint = if (s.song.isFavorite) c.record else c.text)
-                IconAction(Icons.Filled.Share, "Export", onClick = { onExport(s.song.id) })
-                Box {
-                    IconAction(Icons.Filled.MoreVert, "More", onClick = { menu = true })
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; viewModel.showDialog(SongDetailDialog.RenameSong) })
-                        DropdownMenuItem(text = { Text(SongStatusTransitions.finishActionLabel(s.song.status)) }, onClick = { menu = false; viewModel.toggleFinished() })
-                        DropdownMenuItem(text = { Text(SongStatusTransitions.archiveActionLabel(s.song.status)) }, onClick = { menu = false; viewModel.toggleArchived() })
-                        DropdownMenuItem(text = { Text("Search in song") }, onClick = { menu = false; onSearchInSong(s.song.id) })
-                        DropdownMenuItem(text = { Text("Delete song", color = c.destructive) }, onClick = { menu = false; viewModel.showDialog(SongDetailDialog.ConfirmDeleteSong) })
+        is SongDetailState.Loaded -> Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                var menu by remember { mutableStateOf(false) }
+                SongPadTopBar(title = s.song.name, onBack = { guardedBack() }) {
+                    IconAction(if (s.song.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favorite", onClick = viewModel::toggleFavorite, tint = if (s.song.isFavorite) c.record else c.text)
+                    IconAction(Icons.Filled.Share, "Export", onClick = { onExport(s.song.id) })
+                    Box {
+                        IconAction(Icons.Filled.MoreVert, "More", onClick = { menu = true })
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; viewModel.showDialog(SongDetailDialog.RenameSong) })
+                            DropdownMenuItem(text = { Text(SongStatusTransitions.finishActionLabel(s.song.status)) }, onClick = { menu = false; viewModel.toggleFinished() })
+                            DropdownMenuItem(text = { Text(SongStatusTransitions.archiveActionLabel(s.song.status)) }, onClick = { menu = false; viewModel.toggleArchived() })
+                            DropdownMenuItem(text = { Text("Search in song") }, onClick = { menu = false; onSearchInSong(s.song.id) })
+                            DropdownMenuItem(text = { Text("Delete song", color = c.destructive) }, onClick = { menu = false; viewModel.showDialog(SongDetailDialog.ConfirmDeleteSong) })
+                        }
                     }
                 }
-            }
-            TabRow(selectedTabIndex = s.tab.ordinal, containerColor = c.bg, contentColor = c.accent) {
-                SongDetailTab.entries.forEach { t -> Tab(selected = s.tab == t, onClick = { viewModel.selectTab(t) }, text = { Text(t.label) }) }
-            }
-            Box(Modifier.weight(1f)) {
-                when (s.tab) {
-                    SongDetailTab.HOME -> HomeTab(s, onRecord = { onRecord(s.song.id) }, viewModel)
-                    SongDetailTab.LYRICS -> LyricsTab(s.lyrics, viewModel, scrollTarget) { scrollTarget = null }
-                    SongDetailTab.TAKES -> TakesTab(s.takes, viewModel, onRecord = { onRecord(s.song.id) }, scrollTarget = scrollTarget, onScrolled = { scrollTarget = null })
-                    SongDetailTab.NOTES -> NotesTab(
-                        s.notes, viewModel, sections = s.lyrics.documentOrNull()?.sections.orEmpty(), takes = s.takes.takesOrEmpty(),
-                        scrollTarget = scrollTarget, onScrolled = { scrollTarget = null }, onNavigateToRef = ::navigateToRef,
+                TabRow(selectedTabIndex = s.tab.ordinal, containerColor = c.bg, contentColor = c.accent) {
+                    SongDetailTab.entries.forEach { t -> Tab(selected = s.tab == t, onClick = { viewModel.selectTab(t) }, text = { Text(t.label) }) }
+                }
+                Box(Modifier.weight(1f)) {
+                    when (s.tab) {
+                        SongDetailTab.HOME -> HomeTab(s, onRecord = { onRecord(s.song.id) }, viewModel)
+                        SongDetailTab.LYRICS -> LyricsTab(s.lyrics, viewModel, scrollTarget) { scrollTarget = null }
+                        SongDetailTab.TAKES -> TakesTab(s.takes, viewModel, onRecord = { onRecord(s.song.id) }, scrollTarget = scrollTarget, onScrolled = { scrollTarget = null })
+                        SongDetailTab.NOTES -> NotesTab(
+                            s.notes, viewModel, sections = s.lyrics.documentOrNull()?.sections.orEmpty(), takes = s.takes.takesOrEmpty(),
+                            scrollTarget = scrollTarget, onScrolled = { scrollTarget = null }, onNavigateToRef = ::navigateToRef,
+                        )
+                    }
+                }
+                s.nowPlaying?.let { np ->
+                    RibbonPlayer(
+                        title = np.take.name, subtitle = np.take.type.label(), isPlaying = np.isPlaying, progress = np.progress,
+                        positionLabel = "${DurationFormat.mmss(np.positionMs)} / ${DurationFormat.mmss(np.durationMs)}", peaks = np.peaks,
+                        onPlayPause = { viewModel.togglePlayPause(np.take) }, onSeek = viewModel::seekTo, onDismiss = viewModel::dismissPlayer,
                     )
                 }
             }
-            s.nowPlaying?.let { np ->
-                RibbonPlayer(
-                    title = np.take.name, subtitle = np.take.type.label(), isPlaying = np.isPlaying, progress = np.progress,
-                    positionLabel = "${DurationFormat.mmss(np.positionMs)} / ${DurationFormat.mmss(np.durationMs)}", peaks = np.peaks,
-                    onPlayPause = { viewModel.togglePlayPause(np.take) }, onSeek = viewModel::seekTo, onDismiss = viewModel::dismissPlayer,
-                )
+            Column(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 20.dp, bottom = if (s.nowPlaying != null) 96.dp else 24.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (s.tab == SongDetailTab.HOME || s.tab == SongDetailTab.NOTES) {
+                    SmallFloatingActionButton(
+                        onClick = { viewModel.selectTab(SongDetailTab.NOTES); viewModel.composeNote("") },
+                        containerColor = c.surfaceVariant,
+                        contentColor = c.text,
+                    ) {
+                        Icon(Icons.Filled.Edit, "New note")
+                    }
+                }
+                FloatingActionButton(
+                    onClick = { onRecord(s.song.id) },
+                    containerColor = c.record,
+                    contentColor = c.onAccent,
+                ) {
+                    Icon(SongPadIcons.Mic, "Record take")
+                }
             }
         }
     }
@@ -183,6 +211,19 @@ fun SongDetailScreen(
             TextInputDialog("Rename song", "Song name", s.song.name, "Rename", onConfirm = viewModel::renameSong, onDismiss = viewModel::closeDialog)
         }
         is SongDetailDialog.RenameTake -> TextInputDialog("Rename take", "Take name", d.take.name, "Rename", onConfirm = { viewModel.renameTake(d.take.id, it) }, onDismiss = viewModel::closeDialog)
+        is SongDetailDialog.MoveTake -> SongPadBottomSheet(onDismiss = viewModel::closeDialog, title = "Move \"${d.take.name}\" to…") {
+            d.songs.forEach { song ->
+                Text(
+                    song.name,
+                    Modifier.fillMaxWidth().clickable { viewModel.moveTake(d.take.id, song.id) }.padding(Spacing.lg),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = c.text,
+                )
+            }
+            if (d.songs.isEmpty()) {
+                Text("No other songs available.", Modifier.padding(Spacing.lg), color = c.textSecondary)
+            }
+        }
         is SongDetailDialog.ConfirmDeleteTake -> ConfirmDialog("Delete \"${d.take.name}\"?", "The take is removed from this song. Its file is purged after 7 days.", "Delete", onConfirm = { viewModel.deleteTake(d.take.id) }, onDismiss = viewModel::closeDialog)
         is SongDetailDialog.ConfirmDeleteSection -> ConfirmDialog("Delete ${d.label}?", "Its lyrics are removed. This can't be undone.", "Delete", onConfirm = { viewModel.deleteSection(d.sectionId) }, onDismiss = viewModel::closeDialog)
         is SongDetailDialog.ConfirmDeleteNote -> ConfirmDialog("Delete note?", "This can't be undone.", "Delete", onConfirm = { viewModel.deleteNote(d.noteId) }, onDismiss = viewModel::closeDialog)
@@ -194,13 +235,6 @@ fun SongDetailScreen(
 private fun HomeTab(s: SongDetailState.Loaded, onRecord: () -> Unit, vm: SongDetailViewModel) {
     val c = SongPadTheme.colors
     LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Row(Modifier.padding(Spacing.screen), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                PrimaryButton("Record", onClick = onRecord, leadingIcon = SongPadIcons.Mic)
-                SecondaryButton("Add section", onClick = { vm.selectTab(SongDetailTab.LYRICS); vm.beginInsertSection(null) })
-                SecondaryButton("Note", onClick = { vm.selectTab(SongDetailTab.NOTES); vm.composeNote("") })
-            }
-        }
         if (s.activity.isEmpty()) item {
             EmptyState(SongPadIcons.MusicNote, "Nothing here yet", "Record a take, add a lyric section, or jot a note. Everything shows up here, newest first.")
         } else {
@@ -224,12 +258,23 @@ private fun SongActivity.key() = when (this) { is SongActivity.TakeSaved -> "t-"
 
 @Composable
 private fun TakeRow(take: Take, nowPlaying: NowPlaying?, vm: SongDetailViewModel) {
+    val c = SongPadTheme.colors
     TakeListItem(
         name = take.name, typeLabel = take.type.label(), typeIcon = take.type.icon(),
         durationLabel = DurationFormat.mmss(take.durationMs), metaLine = take.meta.createdAt.dateLabel(), statusBadge = take.statusBadge(),
         isPlaying = nowPlaying?.take?.id == take.id && nowPlaying.isPlaying,
-        onClick = { vm.showDialog(SongDetailDialog.RenameTake(take)) }, onPlay = { vm.togglePlayPause(take) },
-        trailing = { IconAction(Icons.Filled.Delete, "Delete take", onClick = { vm.showDialog(SongDetailDialog.ConfirmDeleteTake(take)) }) },
+        onClick = { vm.togglePlayPause(take) }, onPlay = { vm.togglePlayPause(take) },
+        trailing = {
+            var m by remember { mutableStateOf(false) }
+            Box {
+                IconAction(Icons.Filled.MoreVert, "Take options", onClick = { m = true })
+                DropdownMenu(expanded = m, onDismissRequest = { m = false }) {
+                    DropdownMenuItem(text = { Text("Rename") }, onClick = { m = false; vm.showDialog(SongDetailDialog.RenameTake(take)) })
+                    DropdownMenuItem(text = { Text("Move to song…") }, onClick = { m = false; vm.openMoveTakeDialog(take) })
+                    DropdownMenuItem(text = { Text("Delete", color = c.destructive) }, onClick = { m = false; vm.showDialog(SongDetailDialog.ConfirmDeleteTake(take)) })
+                }
+            }
+        },
     )
 }
 

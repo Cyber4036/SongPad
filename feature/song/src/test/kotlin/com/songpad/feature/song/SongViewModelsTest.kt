@@ -35,6 +35,7 @@ import com.songpad.core.model.usecase.RenameTakeUseCase
 import com.songpad.core.model.usecase.StartRecordingUseCase
 import com.songpad.feature.song.detail.LyricsState
 import com.songpad.feature.song.detail.NotesState
+import com.songpad.feature.song.detail.SongDetailDialog
 import com.songpad.feature.song.detail.SongDetailState
 import com.songpad.feature.song.detail.SongDetailViewModel
 import com.songpad.feature.song.detail.TakeFilter
@@ -309,5 +310,23 @@ class SongViewModelsTest {
         vm.deleteSong(); advanceUntilIdle()
         assertThat(navs).hasSize(1)
         assertThat(vm.state.value).isEqualTo(SongDetailState.NotFound)
+    }
+
+    @Test
+    fun `detail - move take moves take to target song and closes dialog`() = runTest(dispatcher) {
+        val song1 = songs.create("Song 1").getOrThrow()
+        val song2 = songs.create("Song 2").getOrThrow()
+        val take = commitTake(song1.id, "Take 1")
+        val vm = detail()
+        subscribe(vm.state, vm.dialog)
+        vm.bind(song1.id); advanceUntilIdle()
+
+        vm.openMoveTakeDialog(take); advanceUntilIdle()
+        val dialog = vm.dialog.value as SongDetailDialog.MoveTake
+        assertThat(dialog.songs.map { it.id }).containsExactly(song2.id)
+
+        vm.moveTake(take.id, song2.id); advanceUntilIdle()
+        assertThat(takes.getTake(take.id)!!.songId).isEqualTo(song2.id)
+        assertThat(vm.dialog.value).isEqualTo(SongDetailDialog.None)
     }
 }
