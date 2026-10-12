@@ -185,6 +185,7 @@ class CaptureViewModelTest {
         // side (PianoOutputStream::open()/start() no-op if already open/started), so >=1 is the real
         // contract, not exactly 1.
         assertThat(piano.armCallCount).isAtLeast(1)
+        assertThat(piano.lastArmedMode).isEqualTo(TakeType.VOICE_PIANO)
 
         vm.dispatch(CaptureIntent.KeyDown(note = 64, velocity = 90, eventTimeNanos = 1L)); dispatcher.scheduler.advanceUntilIdle()
         vm.dispatch(CaptureIntent.KeyUp(note = 64, eventTimeNanos = 2L)); dispatcher.scheduler.advanceUntilIdle()

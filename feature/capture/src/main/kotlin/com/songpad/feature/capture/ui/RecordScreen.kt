@@ -233,6 +233,10 @@ private fun ReadyBody(state: CaptureState.Ready, dispatch: (CaptureIntent) -> Un
         when (state.qualityMode) { QualityMode.STANDARD -> "Standard quality · ~1 MB per minute"; QualityMode.LOSSLESS -> "Lossless quality · ~4 MB per minute" },
         style = MaterialTheme.typography.bodySmall, color = c.textTertiary,
     )
+    if (state.type == TakeType.VOICE_PIANO) {
+        Spacer(Modifier.height(Spacing.sm))
+        Text("Use headphones for best Voice + Piano quality", style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
+    }
     if (state.permission != PermissionState.Granted) {
         Spacer(Modifier.height(Spacing.sm))
         Text("Tap Record to allow the microphone.", style = MaterialTheme.typography.bodySmall, color = c.textSecondary)

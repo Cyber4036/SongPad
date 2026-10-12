@@ -1,5 +1,6 @@
 package com.songpad.core.model.piano
 
+import com.songpad.core.model.take.TakeType
 import kotlinx.coroutines.flow.StateFlow
 
 // ── §15-style contract (added post-Week-1: the sampler wasn't started until S-2/S-3 returned go
@@ -19,7 +20,7 @@ interface PianoSamplerEngine {
     fun loadAsync()
 
     /** Opens and starts the output stream. Call when Piano / Voice+Piano mode is armed. */
-    fun arm(): Result<Unit>
+    fun arm(mode: TakeType = TakeType.PIANO): Result<Unit>
 
     /** Stops the output stream but keeps it open, so re-arming within the same screen is cheap. */
     fun disarm()

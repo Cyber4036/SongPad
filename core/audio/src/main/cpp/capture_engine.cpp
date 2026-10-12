@@ -27,13 +27,13 @@ int32_t CaptureEngine::open() {
         ->setSampleRate(kSampleRate)
         ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Medium)
         ->setChannelCount(kChannels)
-        ->setInputPreset(oboe::InputPreset::Unprocessed)
+        ->setInputPreset(oboe::InputPreset::Generic)
         ->setUsage(oboe::Usage::Media)
         ->setDataCallback(this)
         ->setErrorCallback(this);
     oboe::Result r = builder.openStream(stream_);
     if (r != oboe::Result::OK) {
-        // Retry with the shared, non-Unprocessed path some low-end HALs insist on.
+        // Retry with the shared path some low-end HALs insist on.
         builder.setSharingMode(oboe::SharingMode::Shared)->setInputPreset(oboe::InputPreset::VoiceRecognition);
         r = builder.openStream(stream_);
     }
@@ -113,7 +113,7 @@ oboe::DataCallbackResult CaptureEngine::onAudioReady(oboe::AudioStream*, void* a
     // Runs on Oboe's high-priority callback thread. Copy and return — nothing else (§7.2 rule 3).
     if (capturing_.load(std::memory_order_acquire)) {
         auto* samples = static_cast<int16_t*>(audioData);
-        // ADR-0035: on headphones, the piano sampler's output is mixed in here — it has no acoustic path.
+        // ADR-0035 (amended): piano sampler output is mixed in here. In PIANO mode, SamplerTap mutes mic.
         SamplerTap::instance().mixInto(samples, static_cast<uint32_t>(numFrames * kChannels));
         ring_->write(samples, static_cast<uint32_t>(numFrames * kChannels));
         framesCaptured_.fetch_add(numFrames, std::memory_order_acq_rel);

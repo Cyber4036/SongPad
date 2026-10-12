@@ -80,11 +80,14 @@ class CaptureViewModel @Inject constructor(
         // §8.1: sample loading begins when the screen opens, never gated behind the Piano toggle.
         piano.loadAsync()
         // The Oboe output stream itself only needs to be armed while the mic is actually capturing
-        // it acoustically (§8.1 Phase 0 model), so drive it off every path that enters/leaves
-        // Recording rather than duplicating arm()/disarm() calls in start()/pause()/save()/discard().
+        // (§8.1 / ADR-0035), so drive it off every path that enters/leaves Recording.
         viewModelScope.launch {
-            state.map { it.isCapturingPiano() }.distinctUntilChanged().collect { capturing ->
-                if (capturing) piano.arm() else piano.disarm()
+            state.map { (it as? CaptureState.Recording)?.type }.distinctUntilChanged().collect { type ->
+                if (type != null && type != TakeType.VOICE) {
+                    piano.arm(type)
+                } else {
+                    piano.disarm()
+                }
             }
         }
         viewModelScope.launch { engine.state.collect { store.dispatch(CaptureIntent.EngineChanged(it)) } }

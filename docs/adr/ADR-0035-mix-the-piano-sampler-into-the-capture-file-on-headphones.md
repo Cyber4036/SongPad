@@ -92,3 +92,19 @@ take, is not doubled on the speaker route, the voice-to-piano alignment is accep
 balance works: the mix is digital full-scale against an `Unprocessed` mic, so the piano may sit too loud over the
 voice (spec §18,
 "only a person can confirm the result is musical").
+
+---
+
+## Amendment: 2026-10-12 (Clean digital mix, muted mic in PIANO mode, generic input preset)
+
+**Status:** Accepted (amendment to ADR-0035)
+
+### Context & Problem
+1. In `PIANO` mode (piano only, no vocals), microphone input was still open to the environment, capturing ambient room noise, HVAC rumble, and physical finger tap impacts on the phone screen glass.
+2. Relying on speaker acoustic bleed in `PIANO` mode produced noisy, hollow takes on speaker routes, while `VOICE_PIANO` takes without headphones lacked digital piano.
+3. In `capture_engine.cpp`, opening the mic with `InputPreset::Unprocessed` bypassed AGC and software gains on Pixel devices, resulting in excessively quiet recording levels.
+
+### Amended Decision
+1. **Input Preset:** `CaptureEngine` uses `oboe::InputPreset::Generic` (with fallback to `VoiceRecognition`) instead of `Unprocessed`, restoring standard media recording gain on Pixel and modern Android HALs.
+2. **`PIANO` Mode:** Always mixes the piano sampler digitally into the capture file and **mutes the microphone input buffer** (`replaceMic = true` in `SamplerTap`). The saved take contains 100% pristine digital piano audio with zero room noise or finger tap artifacts, regardless of whether headphones or speakers are used.
+3. **`VOICE_PIANO` Mode:** Always mixes the piano sampler digitally while keeping the microphone live (`replaceMic = false`). To prevent acoustic bleed/doubling when recording over phone speakers, a headphone advisory is displayed in the UI ("Use headphones for best Voice + Piano quality").

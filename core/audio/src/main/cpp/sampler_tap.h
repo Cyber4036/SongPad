@@ -31,7 +31,7 @@ public:
     static constexpr uint32_t kMaxTargetSamples = 8192;      // never buffer more than ~170 ms
     static constexpr uint32_t kScratchSamples = 4096;
 
-    SamplerTap() : ring_(kCapacitySamples), enabled_(false), resetPending_(false), maxProducerBurst_(0) {}
+    SamplerTap() : ring_(kCapacitySamples), enabled_(false), replaceMic_(false), resetPending_(false), maxProducerBurst_(0) {}
 
     static SamplerTap& instance() {
         static SamplerTap tap;
@@ -39,11 +39,12 @@ public:
     }
 
     // Any thread. Enabling discards whatever is buffered so a stale backlog is never mixed in.
-    void setEnabled(bool enabled) {
+    void setEnabled(bool enabled, bool replaceMic = false) {
         if (enabled && !enabled_.load(std::memory_order_acquire)) {
             maxProducerBurst_.store(0, std::memory_order_relaxed);  // the new route may chunk differently
             resetPending_.store(true, std::memory_order_release);
         }
+        replaceMic_.store(replaceMic, std::memory_order_release);
         enabled_.store(enabled, std::memory_order_release);
     }
 
@@ -56,8 +57,8 @@ public:
         ring_.write(src, count);
     }
 
-    // Capture audio thread: saturating-adds `count` tapped samples onto `dst` once the tap is primed. While
-    // priming (after enable or an underrun) the buffer is left as mic only.
+    // Capture audio thread: saturating-adds `count` tapped samples onto `dst` once the tap is primed.
+    // When replaceMic is true (PIANO mode), mic input is muted so the take contains only clean digital piano.
     void mixInto(int16_t* dst, uint32_t count) {
         if (resetPending_.exchange(false, std::memory_order_acq_rel)) {
             ring_.clear();
@@ -65,6 +66,9 @@ public:
             maxConsumerBurst_ = 0;
         }
         if (!enabled()) return;
+        if (replaceMic_.load(std::memory_order_acquire)) {
+            std::fill_n(dst, count, static_cast<int16_t>(0));
+        }
         maxConsumerBurst_ = std::max(maxConsumerBurst_, count);
         const uint32_t burst = std::max(maxProducerBurst_.load(std::memory_order_relaxed), maxConsumerBurst_);
         const uint32_t target = std::clamp(2 * burst, kMinTargetSamples, kMaxTargetSamples);
@@ -106,6 +110,7 @@ private:
 
     RingBuffer ring_;
     std::atomic<bool> enabled_;
+    std::atomic<bool> replaceMic_;
     std::atomic<bool> resetPending_;
     std::atomic<uint32_t> maxProducerBurst_;
     // Capture thread only.

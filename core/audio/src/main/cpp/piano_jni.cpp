@@ -67,9 +67,9 @@ JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeAllNo
     reinterpret_cast<PianoOutputStream*>(h)->engine().allNotesOff();
 }
 
-// ADR-0035: routes the sampler into the capture file while the output route is headphones.
-JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeSetCaptureMix(JNIEnv*, jobject, jboolean enabled) {
-    songpad::SamplerTap::instance().setEnabled(enabled == JNI_TRUE);
+// ADR-0035 (amended): routes the sampler into the capture file. If replaceMic is true (PIANO mode), mic input is muted.
+JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeSetCaptureMix(JNIEnv*, jobject, jboolean enabled, jboolean replaceMic) {
+    songpad::SamplerTap::instance().setEnabled(enabled == JNI_TRUE, replaceMic == JNI_TRUE);
 }
 
 }  // extern "C"
