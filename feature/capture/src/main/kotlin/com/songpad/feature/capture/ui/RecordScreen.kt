@@ -1,6 +1,7 @@
 package com.songpad.feature.capture.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,15 +11,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -27,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.songpad.core.model.audio.InterruptionReason
@@ -131,6 +137,8 @@ fun RecordContent(
     onRequestPermission: () -> Unit,
 ) {
     val c = SongPadTheme.colors
+    var octaveShift by rememberSaveable { mutableIntStateOf(0) }
+    var octaveCount by rememberSaveable { mutableIntStateOf(2) }
 
     Column(Modifier.fillMaxSize()) {
         SongPadTopBar(
@@ -155,8 +163,19 @@ fun RecordContent(
                     LiveWaveform(amplitudes, isRecording = true, Modifier.fillMaxWidth().height(Dimens.waveformHeight))
                     Elapsed(state.elapsedMs, recording = true)
                     if (state.type != TakeType.VOICE) {
-                        Spacer(Modifier.height(Spacing.md))
-                        PianoKeyboard(dispatch)
+                        Spacer(Modifier.height(Spacing.sm))
+                        PianoControls(
+                            octaveShift = octaveShift,
+                            onOctaveShiftChange = { octaveShift = it.coerceIn(-3, 3) },
+                            octaveCount = octaveCount,
+                            onOctaveCountChange = { octaveCount = it.coerceIn(1, 3) },
+                        )
+                        Spacer(Modifier.height(Spacing.xs))
+                        PianoKeyboard(
+                            dispatch = dispatch,
+                            startNote = 48 + 12 * octaveShift,
+                            octaves = octaveCount,
+                        )
                     }
                 }
                 is CaptureState.Paused -> {
@@ -303,6 +322,102 @@ private fun interruptionCopy(reason: InterruptionReason): String = when (reason)
     InterruptionReason.HEADPHONES_UNPLUGGED -> "Recording paused — headphones were unplugged."
     InterruptionReason.BLUETOOTH_DISCONNECTED -> "Recording paused — a Bluetooth device disconnected."
     InterruptionReason.LOW_STORAGE -> "Recording paused — the device is almost out of storage."
+}
+
+@Composable
+private fun PianoControls(
+    octaveShift: Int,
+    onOctaveShiftChange: (Int) -> Unit,
+    octaveCount: Int,
+    onOctaveCountChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = SongPadTheme.colors
+    val baseOctave = 3 + octaveShift
+    val startLabel = "C$baseOctave"
+    val endLabel = "C${baseOctave + octaveCount}"
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Octave stepper: [−] C3–C5 [+]
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        ) {
+            Text("Octave", style = MaterialTheme.typography.labelSmall, color = c.textSecondary)
+            Surface(
+                onClick = { if (octaveShift > -3) onOctaveShiftChange(octaveShift - 1) },
+                enabled = octaveShift > -3,
+                shape = CircleShape,
+                color = c.surfaceVariant,
+                border = BorderStroke(1.dp, c.divider),
+                modifier = Modifier.size(28.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("−", style = MaterialTheme.typography.labelLarge, color = if (octaveShift > -3) c.text else c.textTertiary)
+                }
+            }
+            Text(
+                "$startLabel–$endLabel",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = c.text,
+                modifier = Modifier.padding(horizontal = Spacing.xxs),
+            )
+            Surface(
+                onClick = { if (octaveShift < 3) onOctaveShiftChange(octaveShift + 1) },
+                enabled = octaveShift < 3,
+                shape = CircleShape,
+                color = c.surfaceVariant,
+                border = BorderStroke(1.dp, c.divider),
+                modifier = Modifier.size(28.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("+", style = MaterialTheme.typography.labelLarge, color = if (octaveShift < 3) c.text else c.textTertiary)
+                }
+            }
+        }
+
+        // Range stepper: [−] 2 Oct [+]
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        ) {
+            Text("Range", style = MaterialTheme.typography.labelSmall, color = c.textSecondary)
+            Surface(
+                onClick = { if (octaveCount > 1) onOctaveCountChange(octaveCount - 1) },
+                enabled = octaveCount > 1,
+                shape = CircleShape,
+                color = c.surfaceVariant,
+                border = BorderStroke(1.dp, c.divider),
+                modifier = Modifier.size(28.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("−", style = MaterialTheme.typography.labelLarge, color = if (octaveCount > 1) c.text else c.textTertiary)
+                }
+            }
+            Text(
+                "$octaveCount Oct",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = c.text,
+                modifier = Modifier.padding(horizontal = Spacing.xxs),
+            )
+            Surface(
+                onClick = { if (octaveCount < 3) onOctaveCountChange(octaveCount + 1) },
+                enabled = octaveCount < 3,
+                shape = CircleShape,
+                color = c.surfaceVariant,
+                border = BorderStroke(1.dp, c.divider),
+                modifier = Modifier.size(28.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("+", style = MaterialTheme.typography.labelLarge, color = if (octaveCount < 3) c.text else c.textTertiary)
+                }
+            }
+        }
+    }
 }
 
 

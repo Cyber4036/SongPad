@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshots.SnapshotStateList
@@ -27,26 +28,26 @@ import com.songpad.feature.capture.CaptureIntent
  * per-key composable puts 20+ recomposing nodes in the touch path of a musical instrument.
  * Multi-touch pointer tracking (a mutable map keyed by [PointerId], not Compose state) supports
  * glissando and polyphonic chords with no allocation on the touch path itself.
- *
- * Range and layout are a Phase 1 implementation choice (spec §8.2 doesn't mandate a key count):
- * two octaves, no horizontal scroll — landscape piano (which is where a wider keyboard would
- * naturally live) is explicitly out of scope for Phase 1 (spec §3).
  */
-private const val START_NOTE = 48  // C3
-private const val END_NOTE = 72    // C5
 private val WHITE_PITCH_CLASSES = setOf(0, 2, 4, 5, 7, 9, 11)
 private const val DEFAULT_VELOCITY = 100  // touch pressure reporting is unreliable across devices; see below
 
 @Composable
-fun PianoKeyboard(dispatch: (CaptureIntent) -> Unit, modifier: Modifier = Modifier) {
+fun PianoKeyboard(
+    dispatch: (CaptureIntent) -> Unit,
+    startNote: Int = 48,
+    octaves: Int = 2,
+    modifier: Modifier = Modifier,
+) {
     val c = SongPadTheme.colors
     val whiteKeyColor = c.surface
     val blackKeyColor = Color(0xFF1A1A1A)
     val pressedColor = c.accent
     val borderColor = c.divider
 
-    val whiteNotes = remember { (START_NOTE..END_NOTE).filter { it % 12 in WHITE_PITCH_CLASSES } }
-    val blackNotes = remember { (START_NOTE..END_NOTE).filter { it % 12 !in WHITE_PITCH_CLASSES } }
+    val endNote = startNote + 12 * octaves
+    val whiteNotes = remember(startNote, octaves) { (startNote..endNote).filter { it % 12 in WHITE_PITCH_CLASSES } }
+    val blackNotes = remember(startNote, octaves) { (startNote..endNote).filter { it % 12 !in WHITE_PITCH_CLASSES } }
 
     // Notes currently sounding, for visual feedback only — drives redraw of this one Canvas, not
     // per-key composables (the thing §8.2 actually warns against).
@@ -55,11 +56,22 @@ fun PianoKeyboard(dispatch: (CaptureIntent) -> Unit, modifier: Modifier = Modifi
     // state, read/written only from the gesture coroutine below.
     val pointerNotes = remember { mutableMapOf<PointerId, Int>() }
 
+    // When range or octave shifts, release any sounding notes so none remain stuck
+    DisposableEffect(startNote, octaves) {
+        onDispose {
+            for (note in activeNotes) {
+                dispatch(CaptureIntent.KeyUp(note, System.nanoTime()))
+            }
+            activeNotes.clear()
+            pointerNotes.clear()
+        }
+    }
+
     Canvas(
         modifier
             .fillMaxWidth()
             .height(160.dp)
-            .pointerInput(Unit) {
+            .pointerInput(startNote, octaves) {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Main)
