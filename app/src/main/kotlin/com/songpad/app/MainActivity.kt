@@ -35,6 +35,7 @@ import com.songpad.app.navigation.SongDetailKey
 import com.songpad.app.navigation.SongPadBottomBar
 import com.songpad.app.navigation.isTopLevel
 import com.songpad.app.settings.SettingsScreen
+import com.songpad.core.model.data.NudgeRepository
 import com.songpad.core.model.data.SettingsRepository
 import com.songpad.core.ui.theme.SongPadTheme
 import com.songpad.core.ui.theme.ThemeVariant
@@ -51,18 +52,29 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 
 @HiltViewModel
-class MainViewModel @Inject constructor(settings: SettingsRepository, private val deepLinks: DeepLinkResolver) : ViewModel() {
+class MainViewModel @Inject constructor(
+    settings: SettingsRepository,
+    private val deepLinks: DeepLinkResolver,
+    nudges: NudgeRepository,
+) : ViewModel() {
+
     val themeVariant: StateFlow<String?> = settings.themeVariant.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
         runBlocking { settings.themeVariant.first() },
     )
+
+    val unreadNudgeCount: StateFlow<Int> = nudges.observeHistory().map { list -> list.count { !it.isRead } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
     /** External entry (notification / VIEW intent): the back stack is rebuilt as Library → target. */
     val deepLinkTargets = MutableSharedFlow<NavKey>(extraBufferCapacity = 1)
     /** In-app navigation: the target is pushed, so back returns to where the user tapped. */
@@ -99,15 +111,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SongPadApp(viewModel: MainViewModel) {
     val backStack = rememberNavBackStack(LibraryKey)
+    val unreadNudgeCount by viewModel.unreadNudgeCount.collectAsStateWithLifecycle()
     fun push(key: NavKey) { backStack.add(key) }
     fun pop() { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
     fun switchTopLevel(key: NavKey) {
         backStack.clear(); backStack.add(LibraryKey); if (key != LibraryKey) backStack.add(key)
     }
 
-    // An external deep link rebuilds the stack as Library → target, except while a Record route is on the stack:
-    // clearing it would clear its ViewModel and strand a live take (a nudge can arrive mid-recording, since the
-    // capture FGS lets the user leave the app). Then the target is pushed on top instead.
     LaunchedEffect(Unit) {
         viewModel.deepLinkTargets.collect { target ->
             when {
@@ -121,7 +131,17 @@ fun SongPadApp(viewModel: MainViewModel) {
     val current = backStack.lastOrNull() ?: LibraryKey
     Scaffold(
         containerColor = SongPadTheme.colors.bg,
-        bottomBar = { if (current.isTopLevel) SongPadBottomBar(current = current, onSongs = { switchTopLevel(LibraryKey) }, onRecord = { push(RecordKey()) }, onNudges = { switchTopLevel(NudgesKey) }) },
+        bottomBar = {
+            if (current.isTopLevel) {
+                SongPadBottomBar(
+                    current = current,
+                    onSongs = { switchTopLevel(LibraryKey) },
+                    onRecord = { push(RecordKey()) },
+                    onNudges = { switchTopLevel(NudgesKey) },
+                    unreadNudgeCount = unreadNudgeCount,
+                )
+            }
+        },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             NavDisplay(
@@ -131,8 +151,13 @@ fun SongPadApp(viewModel: MainViewModel) {
                 entryProvider = entryProvider {
                     entry<LibraryKey> {
                         LibraryScreen(
-                            onOpenSong = { push(SongDetailKey(it)) }, onOpenSearch = { push(SearchKey()) },
-                            onOpenSettings = { push(SettingsKey) }, onRecord = { push(RecordKey()) },
+                            onOpenSong = { push(SongDetailKey(it)) },
+                            onOpenSearch = { push(SearchKey()) },
+                            onOpenSettings = { push(SettingsKey) },
+                            onRecord = { push(RecordKey()) },
+                            onOpenLyrics = { songId, sectionId -> push(SongDetailKey(songId, SongDetailTab.LYRICS.name, sectionId)) },
+                            onOpenNotes = { songId, noteId -> push(SongDetailKey(songId, SongDetailTab.NOTES.name, noteId)) },
+                            onOpenTakes = { songId, takeId -> push(SongDetailKey(songId, SongDetailTab.TAKES.name, takeId)) },
                         )
                     }
                     entry<RecordKey> { key ->
@@ -144,14 +169,19 @@ fun SongPadApp(viewModel: MainViewModel) {
                     }
                     entry<SongDetailKey> { key ->
                         SongDetailScreen(
-                            songId = key.songId, initialTab = SongDetailTab.entries.firstOrNull { it.name == key.tab } ?: SongDetailTab.HOME,
+                            songId = key.songId,
+                            initialTab = SongDetailTab.entries.firstOrNull { it.name == key.tab } ?: SongDetailTab.HOME,
                             targetId = key.targetId,
-                            onBack = { pop() }, onRecord = { push(RecordKey(it)) }, onExport = { push(ExportKey(it)) }, onSearchInSong = { push(SearchKey(it)) },
+                            onBack = { pop() },
+                            onRecord = { push(RecordKey(it)) },
+                            onExport = { push(ExportKey(it)) },
+                            onSearchInSong = { push(SearchKey(it)) },
                         )
                     }
                     entry<SearchKey> { key ->
                         SearchScreen(
-                            songId = key.songId, onBack = { pop() },
+                            songId = key.songId,
+                            onBack = { pop() },
                             onOpenSong = { push(SongDetailKey(it)) },
                             onOpenLyrics = { songId, sectionId -> push(SongDetailKey(songId, SongDetailTab.LYRICS.name, sectionId)) },
                             onOpenNotes = { songId, noteId -> push(SongDetailKey(songId, SongDetailTab.NOTES.name, noteId)) },

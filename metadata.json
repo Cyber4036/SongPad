@@ -1,0 +1,6 @@
+{
+  "name": "SongPad",
+  "description": "Songwriting capture and organization app with audio, MIDI piano, lyrics, and take management",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

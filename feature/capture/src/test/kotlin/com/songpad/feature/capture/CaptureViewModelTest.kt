@@ -2,6 +2,7 @@ package com.songpad.feature.capture
 
 import com.google.common.truth.Truth.assertThat
 import com.songpad.core.data.testing.FakeAudioRecorderEngine
+import com.songpad.core.data.testing.FakeLyricsRepository
 import com.songpad.core.data.testing.FakeMidiCaptureEngine
 import com.songpad.core.data.testing.FakePianoSamplerEngine
 import com.songpad.core.data.testing.FakePlaybackController
@@ -44,6 +45,7 @@ class CaptureViewModelTest {
     private val settings = FakeSettingsRepository()
     private val takes = FakeTakeRepository(store)
     private val songs = FakeSongRepository(store)
+    private val lyrics = FakeLyricsRepository(store)
     private val transcodes = FakeTranscodeScheduler()
     private val storage = FakeStorageProbe()
     private val bound = mutableListOf<String>()
@@ -59,6 +61,7 @@ class CaptureViewModelTest {
             StartRecordingUseCase(engine, settings, store.ids, store.clock, storage),
             FinalizeTakeUseCase(engine, midi, takes, settings, transcodes),
             DiscardRecordingUseCase(engine, midi),
+            songs, lyrics,
         )
     }
 

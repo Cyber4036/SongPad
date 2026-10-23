@@ -63,7 +63,11 @@ interface TakeDao {
     @Query("DELETE FROM take WHERE id = :id") suspend fun hardDelete(id: String)
     @Query("SELECT COUNT(*) FROM take WHERE deleted = 0") suspend fun count(): Int
     @Query("SELECT COUNT(*) FROM take WHERE song_id = :songId AND deleted = 0") suspend fun countForSong(songId: String): Int
+    @Query("SELECT song_id AS songId, COUNT(*) AS cnt FROM take WHERE deleted = 0 AND song_id IS NOT NULL GROUP BY song_id")
+    fun observeCountsBySong(): Flow<List<SongCountRow>>
 }
+
+data class SongCountRow(val songId: String, val cnt: Int)
 
 @Dao
 interface AudioAssetDao {
@@ -112,6 +116,9 @@ interface LyricsDao {
 
     @Query("SELECT COUNT(*) FROM section sec JOIN lyrics_document d ON d.id = sec.document_id WHERE d.song_id = :songId AND sec.deleted = 0 AND TRIM(sec.body_text) != ''")
     suspend fun nonEmptySectionCount(songId: String): Int
+
+    @Query("SELECT d.song_id AS songId, COUNT(sec.id) AS cnt FROM lyrics_document d JOIN section sec ON sec.document_id = d.id AND sec.deleted = 0 WHERE d.deleted = 0 GROUP BY d.song_id")
+    fun observeSectionCountsBySong(): Flow<List<SongCountRow>>
 }
 
 @Dao

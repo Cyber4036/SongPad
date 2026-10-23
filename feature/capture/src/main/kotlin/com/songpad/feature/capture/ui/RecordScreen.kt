@@ -2,22 +2,33 @@ package com.songpad.feature.capture.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,30 +41,46 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.songpad.core.model.audio.InterruptionReason
+import com.songpad.core.model.lyrics.LyricsDocument
+import com.songpad.core.model.lyrics.Section
+import com.songpad.core.model.lyrics.SectionTag
+import com.songpad.core.model.song.Song
 import com.songpad.core.model.state.PermissionState
 import com.songpad.core.model.take.QualityMode
 import com.songpad.core.model.take.TakeType
 import com.songpad.core.model.usecase.DurationFormat
 import com.songpad.core.ui.components.ConfirmDialog
 import com.songpad.core.ui.components.EmptyState
-import com.songpad.core.ui.components.FilterPill
 import com.songpad.core.ui.components.GlassPill
 import com.songpad.core.ui.components.IconAction
+import com.songpad.core.ui.components.LayerTogglePill
 import com.songpad.core.ui.components.LiveWaveform
 import com.songpad.core.ui.components.PrimaryButton
 import com.songpad.core.ui.components.RecordButton
 import com.songpad.core.ui.components.SecondaryButton
 import com.songpad.core.ui.components.SeekableWaveform
-import com.songpad.core.ui.components.SongPadTopBar
+import com.songpad.core.ui.components.SheetOptionRow
+import com.songpad.core.ui.components.SongPadBottomSheet
+import com.songpad.core.ui.components.TagChip
+import com.songpad.core.ui.components.TagTone
 import com.songpad.core.ui.components.TextInputDialog
 import com.songpad.core.ui.icons.SongPadIcons
 import com.songpad.core.ui.theme.Dimens
+import com.songpad.core.ui.theme.Radii
+import com.songpad.core.ui.theme.SongPadFonts
 import com.songpad.core.ui.theme.SongPadTheme
 import com.songpad.core.ui.theme.Spacing
 import com.songpad.feature.capture.CaptureEffect
@@ -62,10 +89,15 @@ import com.songpad.feature.capture.CaptureState
 import com.songpad.feature.capture.CaptureViewModel
 import com.songpad.feature.capture.permission.MicrophonePermission
 import com.songpad.feature.capture.permission.rememberMicrophonePermissionRequester
+import kotlinx.coroutines.flow.SharedFlow
 
 /**
- * Phase 0 §6 recording screen: mode pills, live waveform, glass-pill transport, review scrubber, save/discard.
- * The screen renders state and emits intents; every rule lives in [CaptureViewModel].
+ * Phase 0 §6 recording screen redesigned to match Capture.html:
+ * - Independent Voice, Piano, and Lyrics layer toggles
+ * - Editorial context header ("READY WHEN YOU ARE" / "RECORDING" / "PAUSED — TAP WAVEFORM TO SCRUB")
+ * - Live Lyrics section editor while recording (with "Which song?" picker sheet for loose ideas)
+ * - Docked Piano with Key Size zoom (Small / Medium / Large) and Octave stepper
+ * - Compact floating Glass-Pill transport bar with inline waveform and tabular timer
  */
 @Composable
 fun RecordScreen(
@@ -77,6 +109,10 @@ fun RecordScreen(
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
     val reviewPeaks by viewModel.reviewPeaks.collectAsStateWithLifecycle()
+    val boundSongId by viewModel.boundSongId.collectAsStateWithLifecycle()
+    val activeSongName by viewModel.activeSongName.collectAsStateWithLifecycle()
+    val activeLyrics by viewModel.activeLyrics.collectAsStateWithLifecycle()
+    val availableSongs by viewModel.availableSongs.collectAsStateWithLifecycle()
     val requester = rememberMicrophonePermissionRequester { viewModel.dispatch(CaptureIntent.PermissionResult(it)) }
 
     LaunchedEffect(songId) {
@@ -95,9 +131,6 @@ fun RecordScreen(
         }
     }
 
-    // Leaving pops this route and clears the ViewModel, which would strand a live take (or cancel a save
-    // mid-commit). Phase 0 §5: preserve the recording; discarding needs confirmation when loss is possible.
-    // So while a take is open, back/close goes through the same discard confirmation as the Discard button.
     val takeOpen = state.holdsOpenTake()
     val close = {
         when {
@@ -116,6 +149,16 @@ fun RecordScreen(
         state = state,
         reviewPeaks = reviewPeaks,
         amplitudes = viewModel.amplitudes,
+        boundSongId = boundSongId,
+        activeSongName = activeSongName,
+        activeLyrics = activeLyrics,
+        availableSongs = availableSongs,
+        onSelectSongForLyrics = viewModel::selectSongForCapture,
+        onCreateSongForLyrics = { name, after -> viewModel.createSongForCapture(name, after) },
+        onEditLyricsSection = viewModel::editLyricsSection,
+        onInsertLyricsSection = viewModel::insertLyricsSection,
+        onRetagLyricsSection = viewModel::retagLyricsSection,
+        onDeleteLyricsSection = viewModel::deleteLyricsSection,
         dispatch = viewModel::dispatch,
         onClose = close,
         onOpenSettings = { MicrophonePermission.openAppSettings(context) },
@@ -130,76 +173,209 @@ private fun CaptureState.holdsOpenTake(): Boolean = this is CaptureState.Recordi
 fun RecordContent(
     state: CaptureState,
     reviewPeaks: FloatArray,
-    amplitudes: kotlinx.coroutines.flow.SharedFlow<Float>,
+    amplitudes: SharedFlow<Float>,
     dispatch: (CaptureIntent) -> Unit,
     onClose: () -> Unit,
     onOpenSettings: () -> Unit,
     onRequestPermission: () -> Unit,
+    boundSongId: String? = state.songId,
+    activeSongName: String? = null,
+    activeLyrics: LyricsDocument? = null,
+    availableSongs: List<Song> = emptyList(),
+    onSelectSongForLyrics: (String) -> Unit = {},
+    onCreateSongForLyrics: (String, (String) -> Unit) -> Unit = { _, _ -> },
+    onEditLyricsSection: (String, String) -> Unit = { _, _ -> },
+    onInsertLyricsSection: (SectionTag, String?) -> Unit = { _, _ -> },
+    onRetagLyricsSection: (String, SectionTag, String?) -> Unit = { _, _, _ -> },
+    onDeleteLyricsSection: (String) -> Unit = {},
 ) {
     val c = SongPadTheme.colors
     var octaveShift by rememberSaveable { mutableIntStateOf(0) }
-    var octaveCount by rememberSaveable { mutableIntStateOf(2) }
+    var keySizeOrd by rememberSaveable { mutableIntStateOf(PianoKeySize.MEDIUM.ordinal) }
+    val keySize = PianoKeySize.entries[keySizeOrd.coerceIn(0, PianoKeySize.entries.lastIndex)]
 
-    Column(Modifier.fillMaxSize()) {
-        SongPadTopBar(
-            title = when (state) {
-                is CaptureState.Recording -> "Recording"
-                is CaptureState.Paused, is CaptureState.Reviewing -> "Review"
-                is CaptureState.Interrupted -> "Interrupted"
-                else -> "Record"
-            },
-            onBack = onClose,
-            backContentDescription = "Close",
-        )
+    var lyricsLayer by rememberSaveable { mutableStateOf(false) }
+    var showPickSongSheet by remember { mutableStateOf(false) }
+    var showNewSongDialog by remember { mutableStateOf(false) }
+    var retaggingSection by remember { mutableStateOf<Section?>(null) }
+    var showAddSectionSheet by remember { mutableStateOf(false) }
 
-        Column(
-            Modifier.weight(1f).fillMaxWidth().padding(horizontal = Spacing.screen),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+    val voiceActive = state.type == TakeType.VOICE || state.type == TakeType.VOICE_PIANO
+    val pianoActive = state.type == TakeType.PIANO || state.type == TakeType.VOICE_PIANO
+
+    fun toggleVoice() {
+        val nextType = when (state.type) {
+            TakeType.VOICE -> TakeType.PIANO
+            TakeType.PIANO -> TakeType.VOICE_PIANO
+            TakeType.VOICE_PIANO -> TakeType.PIANO
+        }
+        dispatch(CaptureIntent.SelectType(nextType))
+    }
+
+    fun togglePiano() {
+        val nextType = when (state.type) {
+            TakeType.VOICE -> TakeType.VOICE_PIANO
+            TakeType.PIANO -> TakeType.VOICE
+            TakeType.VOICE_PIANO -> TakeType.VOICE
+        }
+        dispatch(CaptureIntent.SelectType(nextType))
+    }
+
+    fun toggleLyrics() {
+        if (lyricsLayer) {
+            lyricsLayer = false
+        } else if (boundSongId != null) {
+            lyricsLayer = true
+            if (activeLyrics == null || activeLyrics.sections.isEmpty()) {
+                onInsertLyricsSection(SectionTag.VERSE, null)
+            }
+        } else {
+            showPickSongSheet = true
+        }
+    }
+
+    Column(Modifier.fillMaxSize().background(c.bg)) {
+        // Top Bar: [✕ Close] + [Voice] [Piano] [Lyrics] layer pills
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.screen, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            when (state) {
-                is CaptureState.Ready -> ReadyBody(state, dispatch)
-                is CaptureState.Recording -> {
-                    LiveWaveform(amplitudes, isRecording = true, Modifier.fillMaxWidth().height(Dimens.waveformHeight))
-                    Elapsed(state.elapsedMs, recording = true)
-                    if (state.type != TakeType.VOICE) {
-                        Spacer(Modifier.height(Spacing.sm))
-                        PianoControls(
-                            octaveShift = octaveShift,
-                            onOctaveShiftChange = { octaveShift = it.coerceIn(-3, 3) },
-                            octaveCount = octaveCount,
-                            onOctaveCountChange = { octaveCount = it.coerceIn(1, 3) },
-                        )
-                        Spacer(Modifier.height(Spacing.xs))
-                        PianoKeyboard(
-                            dispatch = dispatch,
-                            startNote = 48 + 12 * octaveShift,
-                            octaves = octaveCount,
+            IconAction(
+                icon = Icons.Filled.Close,
+                contentDescription = "Close",
+                onClick = onClose,
+                outlined = true,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LayerTogglePill(
+                    label = "Voice",
+                    active = voiceActive,
+                    onClick = { toggleVoice() },
+                )
+                LayerTogglePill(
+                    label = "Piano",
+                    active = pianoActive,
+                    onClick = { togglePiano() },
+                )
+                LayerTogglePill(
+                    label = "Lyrics",
+                    active = lyricsLayer,
+                    onClick = { toggleLyrics() },
+                )
+            }
+        }
+
+        // Context Header ("READY WHEN YOU ARE" / "RECORDING" + Song name or "Loose idea")
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 4.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                if (state is CaptureState.Recording) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(c.record),
+                    )
+                }
+                Text(
+                    text = when (state) {
+                        is CaptureState.Recording -> "RECORDING"
+                        is CaptureState.Paused, is CaptureState.Reviewing -> "PAUSED — TAP WAVEFORM TO SCRUB"
+                        is CaptureState.Interrupted -> "INTERRUPTED"
+                        else -> "READY WHEN YOU ARE"
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.1.sp,
+                        fontSize = 11.sp,
+                    ),
+                    color = when (state) {
+                        is CaptureState.Recording -> c.record
+                        else -> c.textTertiary
+                    },
+                )
+            }
+            Spacer(Modifier.height(2.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = activeSongName ?: if (boundSongId != null) "Song take" else "Loose idea",
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontFamily = SongPadFonts.heading,
+                        fontSize = 22.sp,
+                    ),
+                    color = c.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (lyricsLayer && (state is CaptureState.Recording || state is CaptureState.Paused || state is CaptureState.Reviewing)) {
+                    val elapsed = when (state) {
+                        is CaptureState.Recording -> state.elapsedMs
+                        is CaptureState.Paused -> state.review.positionMs.takeIf { it > 0 } ?: state.elapsedMs
+                        is CaptureState.Reviewing -> state.review.positionMs
+                        else -> 0L
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(Radii.pill),
+                        color = if (state is CaptureState.Recording) c.record.copy(alpha = 0.14f) else c.surface,
+                        border = BorderStroke(1.dp, if (state is CaptureState.Recording) c.record.copy(alpha = 0.4f) else c.divider),
+                    ) {
+                        Text(
+                            text = DurationFormat.mmss(elapsed),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = SongPadFonts.heading,
+                                fontSize = 14.sp,
+                                fontFeatureSettings = "tnum",
+                            ),
+                            color = if (state is CaptureState.Recording) c.record else c.text,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                         )
                     }
                 }
-                is CaptureState.Paused -> {
-                    SeekableWaveform(reviewPeaks, state.review.progress, { dispatch(CaptureIntent.Scrub(it)) }, Modifier.fillMaxWidth().height(Dimens.waveformHeight))
-                    Elapsed(state.review.positionMs, recording = false, total = state.elapsedMs)
+            }
+        }
+
+        // Main stage: either terminal/error state, live Lyrics layer, or Waveform + Timer stage
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
+            when (state) {
+                is CaptureState.Saving -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Saving…", style = MaterialTheme.typography.titleMedium, color = c.textSecondary)
                 }
-                is CaptureState.Reviewing -> {
-                    SeekableWaveform(reviewPeaks, state.review.progress, { dispatch(CaptureIntent.Scrub(it)) }, Modifier.fillMaxWidth().height(Dimens.waveformHeight))
-                    Elapsed(state.review.positionMs, recording = false, total = state.elapsedMs)
+                is CaptureState.Saved -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Saved", style = MaterialTheme.typography.titleMedium, color = c.success)
                 }
-                is CaptureState.Interrupted -> {
-                    Text(interruptionCopy(state.reason), style = MaterialTheme.typography.bodyLarge, color = c.textSecondary)
-                    Spacer(Modifier.height(Spacing.md))
-                    Elapsed(state.elapsedMs, recording = false)
-                }
-                is CaptureState.Saving -> Text("Saving…", style = MaterialTheme.typography.titleMedium, color = c.textSecondary)
-                is CaptureState.Saved -> Text("Saved", style = MaterialTheme.typography.titleMedium, color = c.success)
                 is CaptureState.Discarded -> EmptyState(
-                    icon = SongPadIcons.Mic, title = "Recording discarded", body = "Nothing was kept.",
-                    actionLabel = "Record again", onAction = { dispatch(CaptureIntent.Reset) },
+                    icon = SongPadIcons.Mic,
+                    title = "Recording discarded",
+                    body = "Nothing was kept.",
+                    actionLabel = "Record again",
+                    onAction = { dispatch(CaptureIntent.Reset) },
                 )
                 is CaptureState.Failed -> EmptyState(
-                    icon = SongPadIcons.Mic, title = "Recording failed", body = state.error.message,
-                    actionLabel = "Try again", onAction = { dispatch(CaptureIntent.Reset) },
+                    icon = SongPadIcons.Mic,
+                    title = "Recording failed",
+                    body = state.error.message,
+                    actionLabel = "Try again",
+                    onAction = { dispatch(CaptureIntent.Reset) },
                 )
                 is CaptureState.PermissionDenied -> EmptyState(
                     icon = SongPadIcons.Mic,
@@ -212,14 +388,69 @@ fun RecordContent(
                     icon = SongPadIcons.Mic,
                     title = "Not enough free space",
                     body = "About ${state.freeBytes / (1024 * 1024)} MB is free. Recording needs roughly 6 MB per minute; free up space and try again.",
-                    actionLabel = "Try again", onAction = { dispatch(CaptureIntent.Reset) },
+                    actionLabel = "Try again",
+                    onAction = { dispatch(CaptureIntent.Reset) },
+                )
+                else -> {
+                    if (lyricsLayer && boundSongId != null) {
+                        LiveLyricsStage(
+                            lyrics = activeLyrics,
+                            onEditSection = onEditLyricsSection,
+                            onRetagSection = { retaggingSection = it },
+                            onDeleteSection = onDeleteLyricsSection,
+                            onAddSection = { showAddSectionSheet = true },
+                        )
+                    } else {
+                        WaveformTimerStage(
+                            state = state,
+                            amplitudes = amplitudes,
+                            reviewPeaks = reviewPeaks,
+                            compact = pianoActive,
+                            onScrub = { dispatch(CaptureIntent.Scrub(it)) },
+                        )
+                    }
+                }
+            }
+        }
+
+        // Docked Piano Keyboard when Piano layer is active
+        val showPiano = pianoActive && (state is CaptureState.Ready || state is CaptureState.Recording || state is CaptureState.Paused || state is CaptureState.Reviewing)
+        if (showPiano) {
+            HorizontalDivider(color = c.divider, thickness = 1.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(c.surface)
+                    .padding(top = 8.dp, bottom = 4.dp),
+            ) {
+                PianoControlsBar(
+                    keySize = keySize,
+                    onKeySizeSmaller = { if (keySizeOrd > 0) keySizeOrd-- },
+                    onKeySizeLarger = { if (keySizeOrd < PianoKeySize.entries.lastIndex) keySizeOrd++ },
+                    octaveShift = octaveShift,
+                    onOctaveDown = { if (octaveShift > -2) octaveShift-- },
+                    onOctaveUp = { if (octaveShift < 2) octaveShift++ },
+                )
+                Spacer(Modifier.height(6.dp))
+                PianoKeyboard(
+                    dispatch = dispatch,
+                    startNote = 48 + 12 * octaveShift,
+                    octaves = 2,
+                    keySize = keySize,
                 )
             }
         }
 
-        Transport(state, dispatch, onSave = {
-            dispatch(CaptureIntent.Save(takeName = "", newSongName = null))
-        })
+        // Bottom Transport (80.dp pulsing Record FAB when Ready; Floating Glass-Pill when Recording/Paused/Reviewing)
+        Transport(
+            state = state,
+            amplitudes = amplitudes,
+            reviewPeaks = reviewPeaks,
+            dispatch = dispatch,
+            onSave = {
+                dispatch(CaptureIntent.Save(takeName = "", newSongName = null))
+            },
+        )
     }
 
     val confirmDiscard = when (state) {
@@ -237,71 +468,541 @@ fun RecordContent(
             onDismiss = { dispatch(CaptureIntent.CancelDiscard) },
         )
     }
+
+    if (showPickSongSheet) {
+        SongPadBottomSheet(
+            onDismiss = { showPickSongSheet = false },
+            title = "Which song?",
+            subtitle = "Lyrics belong to a song. Pick one or start a new one.",
+        ) {
+            SheetOptionRow(
+                label = "+ New song…",
+                accent = true,
+                onClick = {
+                    showPickSongSheet = false
+                    showNewSongDialog = true
+                },
+            )
+            availableSongs.forEach { s ->
+                SheetOptionRow(
+                    label = s.name,
+                    meta = "${s.sectionCount} section${if (s.sectionCount == 1) "" else "s"}",
+                    onClick = {
+                        onSelectSongForLyrics(s.id)
+                        showPickSongSheet = false
+                        lyricsLayer = true
+                    },
+                )
+            }
+        }
+    }
+
+    if (showNewSongDialog) {
+        TextInputDialog(
+            title = "New song",
+            label = "Song name",
+            initialValue = "",
+            confirmLabel = "Create",
+            onConfirm = { name ->
+                showNewSongDialog = false
+                onCreateSongForLyrics(name) {
+                    lyricsLayer = true
+                }
+            },
+            onDismiss = { showNewSongDialog = false },
+        )
+    }
+
+    retaggingSection?.let { sec ->
+        RecordSectionTagSheet(
+            title = "Section tag",
+            activeTag = sec.tag,
+            onSelect = { tag, custom ->
+                onRetagLyricsSection(sec.id, tag, custom)
+                retaggingSection = null
+            },
+            onDismiss = { retaggingSection = null },
+        )
+    }
+
+    if (showAddSectionSheet) {
+        RecordSectionTagSheet(
+            title = "Add section",
+            activeTag = null,
+            onSelect = { tag, custom ->
+                onInsertLyricsSection(tag, custom)
+                showAddSectionSheet = false
+            },
+            onDismiss = { showAddSectionSheet = false },
+        )
+    }
 }
 
 @Composable
-private fun ReadyBody(state: CaptureState.Ready, dispatch: (CaptureIntent) -> Unit) {
+private fun WaveformTimerStage(
+    state: CaptureState,
+    amplitudes: SharedFlow<Float>,
+    reviewPeaks: FloatArray,
+    compact: Boolean,
+    onScrub: (Float) -> Unit,
+) {
     val c = SongPadTheme.colors
-    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-        FilterPill("Voice", selected = state.type == TakeType.VOICE, onClick = { dispatch(CaptureIntent.SelectType(TakeType.VOICE)) }, icon = SongPadIcons.Mic)
-        FilterPill("Piano", selected = state.type == TakeType.PIANO, onClick = { dispatch(CaptureIntent.SelectType(TakeType.PIANO)) }, icon = SongPadIcons.Piano)
-        FilterPill("Voice + Piano", selected = state.type == TakeType.VOICE_PIANO, onClick = { dispatch(CaptureIntent.SelectType(TakeType.VOICE_PIANO)) })
+    val elapsedMs = when (state) {
+        is CaptureState.Recording -> state.elapsedMs
+        is CaptureState.Paused -> state.review.positionMs.takeIf { it > 0 } ?: state.elapsedMs
+        is CaptureState.Reviewing -> state.review.positionMs
+        is CaptureState.Interrupted -> state.elapsedMs
+        else -> 0L
     }
-    Spacer(Modifier.height(Spacing.xl))
-    Text(
-        when (state.qualityMode) { QualityMode.STANDARD -> "Standard quality · ~1 MB per minute"; QualityMode.LOSSLESS -> "Lossless quality · ~4 MB per minute" },
-        style = MaterialTheme.typography.bodySmall, color = c.textTertiary,
-    )
-    if (state.type == TakeType.VOICE_PIANO) {
-        Spacer(Modifier.height(Spacing.sm))
-        Text("Use headphones for best Voice + Piano quality", style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
+    val totalMs = when (state) {
+        is CaptureState.Paused -> state.elapsedMs
+        is CaptureState.Reviewing -> state.elapsedMs
+        else -> null
     }
-    if (state.permission != PermissionState.Granted) {
-        Spacer(Modifier.height(Spacing.sm))
-        Text("Tap Record to allow the microphone.", style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
-    }
-}
 
-@Composable
-private fun Elapsed(ms: Long, recording: Boolean, total: Long? = null) {
-    val c = SongPadTheme.colors
-    Spacer(Modifier.height(Spacing.lg))
-    Text(
-        if (total != null) "${DurationFormat.mmss(ms)} / ${DurationFormat.mmss(total)}" else DurationFormat.mmss(ms),
-        style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.SemiBold),
-        color = if (recording) c.record else c.text,
-    )
-}
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = DurationFormat.mmss(elapsedMs),
+            style = MaterialTheme.typography.displayLarge.copy(
+                fontFamily = SongPadFonts.heading,
+                fontSize = if (compact) 40.sp else 52.sp,
+                lineHeight = if (compact) 44.sp else 56.sp,
+                fontFeatureSettings = "tnum",
+            ),
+            color = if (state is CaptureState.Recording) c.record else c.text,
+        )
+        if (totalMs != null && (state is CaptureState.Paused || state is CaptureState.Reviewing)) {
+            Text(
+                text = "of ${DurationFormat.mmss(totalMs)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = c.textTertiary,
+            )
+        }
+        Spacer(Modifier.height(if (compact) 8.dp else 16.dp))
 
-/** Phase 0 §6: the glass pill holds the transport; Record protrudes at the centre. */
-@Composable
-private fun Transport(state: CaptureState, dispatch: (CaptureIntent) -> Unit, onSave: () -> Unit) {
-    val c = SongPadTheme.colors
-    Box(Modifier.fillMaxWidth().padding(Spacing.screen), contentAlignment = Alignment.Center) {
         when (state) {
-            is CaptureState.Ready -> RecordButton(isRecording = false, onClick = { dispatch(CaptureIntent.Start) })
-            is CaptureState.Recording -> GlassPill {
-                IconAction(Icons.Filled.Delete, "Discard", onClick = { dispatch(CaptureIntent.RequestDiscard) }, tint = c.destructive)
-                Spacer(Modifier.width(Spacing.md))
-                RecordButton(isRecording = true, onClick = { dispatch(CaptureIntent.Pause) }, size = Dimens.recordFabCompact)
-                Spacer(Modifier.width(Spacing.md))
-                PrimaryButton("Save", onClick = onSave)
+            is CaptureState.Paused -> SeekableWaveform(
+                peaks = reviewPeaks,
+                progress = state.review.progress,
+                onSeek = onScrub,
+                modifier = Modifier.fillMaxWidth().height(if (compact) 56.dp else Dimens.waveformHeight),
+            )
+            is CaptureState.Reviewing -> SeekableWaveform(
+                peaks = reviewPeaks,
+                progress = state.review.progress,
+                onSeek = onScrub,
+                modifier = Modifier.fillMaxWidth().height(if (compact) 56.dp else Dimens.waveformHeight),
+            )
+            is CaptureState.Interrupted -> Text(
+                text = interruptionCopy(state.reason),
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.textSecondary,
+                textAlign = TextAlign.Center,
+            )
+            else -> LiveWaveform(
+                amplitudes = amplitudes,
+                isRecording = state is CaptureState.Recording,
+                modifier = Modifier.fillMaxWidth().height(if (compact) 56.dp else Dimens.waveformHeight),
+            )
+        }
+
+        if (state is CaptureState.Ready) {
+            Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
+            Text(
+                text = when {
+                    state.permission != PermissionState.Granted -> "Tap Record to allow the microphone."
+                    state.type == TakeType.VOICE_PIANO -> "Use headphones for best Voice + Piano quality"
+                    state.qualityMode == QualityMode.LOSSLESS -> "Lossless FLAC · tap record and play"
+                    else -> "Tap record and play — name it later, or don't"
+                },
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                color = c.textSecondary,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LiveLyricsStage(
+    lyrics: LyricsDocument?,
+    onEditSection: (String, String) -> Unit,
+    onRetagSection: (Section) -> Unit,
+    onDeleteSection: (String) -> Unit,
+    onAddSection: () -> Unit,
+) {
+    val c = SongPadTheme.colors
+    val sorted = remember(lyrics) { lyrics?.sections?.sortedBy { it.sortOrder }.orEmpty() }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = Spacing.screen, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        items(sorted, key = { it.id }) { sec ->
+            var text by remember(sec.id, sec.bodyText) { mutableStateOf(sec.bodyText) }
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = c.surface,
+                border = BorderStroke(1.dp, c.divider),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        TagChip(
+                            text = sec.displayLabel,
+                            tone = TagTone.Accent,
+                            onClick = { onRetagSection(sec) },
+                        )
+                        Surface(
+                            onClick = { onDeleteSection(sec.id) },
+                            shape = CircleShape,
+                            color = Color.Transparent,
+                            modifier = Modifier.size(26.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Close, "Delete section", tint = c.textTertiary, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                    }
+                    BasicTextField(
+                        value = text,
+                        onValueChange = { text = it; onEditSection(sec.id, it) },
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            color = c.text,
+                            fontSize = 14.sp,
+                            lineHeight = 21.sp,
+                        ),
+                        cursorBrush = SolidColor(c.accent),
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
+                        decorationBox = { inner ->
+                            Box(Modifier.fillMaxWidth()) {
+                                if (text.isEmpty()) {
+                                    Text(
+                                        text = "Write while you play…",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                                        color = c.textTertiary,
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                    )
+                }
+            }
+        }
+        item {
+            Surface(
+                onClick = onAddSection,
+                shape = RoundedCornerShape(Radii.pill),
+                color = c.accent100,
+                contentColor = c.accent800,
+            ) {
+                Text(
+                    text = "+ Section",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 12.sp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PianoControlsBar(
+    keySize: PianoKeySize,
+    onKeySizeSmaller: () -> Unit,
+    onKeySizeLarger: () -> Unit,
+    octaveShift: Int,
+    onOctaveDown: () -> Unit,
+    onOctaveUp: () -> Unit,
+) {
+    val c = SongPadTheme.colors
+    val baseOct = 3 + octaveShift
+    val rangeLabel = "C$baseOct–B${baseOct + 1}"
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Key size zoom pill stepper
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = "KEYS",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.6.sp),
+                color = c.textSecondary,
+            )
+            PillStepper(
+                value = keySize.label,
+                canDecrement = keySize != PianoKeySize.SMALL,
+                canIncrement = keySize != PianoKeySize.LARGE,
+                onDecrement = onKeySizeSmaller,
+                onIncrement = onKeySizeLarger,
+            )
+        }
+
+        // Octave pill stepper
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = "OCTAVE",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.6.sp),
+                color = c.textSecondary,
+            )
+            PillStepper(
+                value = rangeLabel,
+                canDecrement = octaveShift > -2,
+                canIncrement = octaveShift < 2,
+                onDecrement = onOctaveDown,
+                onIncrement = onOctaveUp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PillStepper(
+    value: String,
+    canDecrement: Boolean,
+    canIncrement: Boolean,
+    onDecrement: () -> Unit,
+    onIncrement: () -> Unit,
+) {
+    val c = SongPadTheme.colors
+    Surface(
+        shape = RoundedCornerShape(Radii.pill),
+        color = c.bg,
+        border = BorderStroke(1.dp, c.divider),
+    ) {
+        Row(
+            modifier = Modifier.padding(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Surface(
+                onClick = onDecrement,
+                enabled = canDecrement,
+                shape = CircleShape,
+                color = c.surface,
+                modifier = Modifier.size(22.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "−",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = if (canDecrement) c.text else c.textTertiary,
+                    )
+                }
+            }
+            Text(
+                text = value,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 11.sp),
+                color = c.text,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+            Surface(
+                onClick = onIncrement,
+                enabled = canIncrement,
+                shape = CircleShape,
+                color = c.surface,
+                modifier = Modifier.size(22.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "+",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = if (canIncrement) c.text else c.textTertiary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Phase 0 §6: 80.dp pulsing Record FAB when idle; floating translucent Glass-Pill when recording/paused/reviewing. */
+@Composable
+private fun Transport(
+    state: CaptureState,
+    amplitudes: SharedFlow<Float>,
+    reviewPeaks: FloatArray,
+    dispatch: (CaptureIntent) -> Unit,
+    onSave: () -> Unit,
+) {
+    val c = SongPadTheme.colors
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.screen, vertical = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (state) {
+            is CaptureState.Ready -> RecordButton(
+                isRecording = false,
+                onClick = { dispatch(CaptureIntent.Start) },
+                size = Dimens.recordFabLarge,
+                pulseWhenIdle = true,
+                haloWidth = 6.dp,
+            )
+            is CaptureState.Recording -> GlassPill(Modifier.fillMaxWidth()) {
+                // ✕ Discard
+                Surface(
+                    onClick = { dispatch(CaptureIntent.RequestDiscard) },
+                    shape = CircleShape,
+                    color = c.surface,
+                    border = BorderStroke(1.dp, c.divider),
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Close, "Discard", tint = c.destructive, modifier = Modifier.size(16.dp))
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                // ✓ Save pill
+                Surface(
+                    onClick = onSave,
+                    shape = RoundedCornerShape(Radii.pill),
+                    color = c.accent,
+                    contentColor = c.onAccent,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Icon(SongPadIcons.Check, null, modifier = Modifier.size(14.dp))
+                        Text("Save", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp))
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                // ⏸ Pause circle
+                Surface(
+                    onClick = { dispatch(CaptureIntent.Pause) },
+                    shape = CircleShape,
+                    color = c.record,
+                    contentColor = c.onAccent,
+                    modifier = Modifier.size(38.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(SongPadIcons.Pause, "Pause", modifier = Modifier.size(16.dp))
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                // Inline live waveform
+                LiveWaveform(
+                    amplitudes = amplitudes,
+                    isRecording = true,
+                    modifier = Modifier.weight(1f).height(30.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = DurationFormat.mmss(state.elapsedMs),
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        fontFeatureSettings = "tnum",
+                    ),
+                    color = c.text,
+                )
             }
             is CaptureState.Paused, is CaptureState.Reviewing -> {
                 val playing = state is CaptureState.Reviewing && state.review.isPlaying
-                GlassPill {
-                    IconAction(Icons.Filled.Delete, "Discard", onClick = { dispatch(CaptureIntent.RequestDiscard) }, tint = c.destructive)
-                    Spacer(Modifier.width(Spacing.sm))
-                    IconAction(
-                        if (playing) SongPadIcons.Pause else Icons.Filled.PlayArrow,
-                        if (playing) "Pause review" else "Play review",
+                val review = when (state) {
+                    is CaptureState.Paused -> state.review
+                    is CaptureState.Reviewing -> state.review
+                    else -> null
+                }
+                val elapsed = when (state) {
+                    is CaptureState.Paused -> state.elapsedMs
+                    is CaptureState.Reviewing -> state.elapsedMs
+                    else -> 0L
+                }
+                GlassPill(Modifier.fillMaxWidth()) {
+                    // ✕ Discard
+                    Surface(
+                        onClick = { dispatch(CaptureIntent.RequestDiscard) },
+                        shape = CircleShape,
+                        color = c.surface,
+                        border = BorderStroke(1.dp, c.divider),
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Close, "Discard", tint = c.destructive, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    // ✓ Save pill
+                    Surface(
+                        onClick = onSave,
+                        shape = RoundedCornerShape(Radii.pill),
+                        color = c.accent,
+                        contentColor = c.onAccent,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(SongPadIcons.Check, null, modifier = Modifier.size(14.dp))
+                            Text("Save", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp))
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    // ▶ / ⏸ Review playback button
+                    Surface(
                         onClick = { dispatch(if (playing) CaptureIntent.PauseReview else CaptureIntent.PlayReview) },
-                        filled = true,
+                        shape = CircleShape,
+                        color = c.surface,
+                        border = BorderStroke(1.dp, c.divider),
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (playing) SongPadIcons.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (playing) "Pause review" else "Play review",
+                                tint = c.text,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    // Resume Record button
+                    RecordButton(
+                        isRecording = false,
+                        onClick = { dispatch(CaptureIntent.Resume) },
+                        size = 38.dp,
+                        haloWidth = 3.dp,
                     )
-                    Spacer(Modifier.width(Spacing.sm))
-                    RecordButton(isRecording = false, onClick = { dispatch(CaptureIntent.Resume) }, size = Dimens.recordFabCompact)
-                    Spacer(Modifier.width(Spacing.md))
-                    PrimaryButton("Save", onClick = onSave)
+                    Spacer(Modifier.width(8.dp))
+                    // Scrubbable inline waveform
+                    SeekableWaveform(
+                        peaks = reviewPeaks,
+                        progress = review?.progress ?: 0f,
+                        onSeek = { dispatch(CaptureIntent.Scrub(it)) },
+                        modifier = Modifier.weight(1f).height(30.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = DurationFormat.mmss(review?.positionMs?.takeIf { it > 0 } ?: elapsed),
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            fontFeatureSettings = "tnum",
+                        ),
+                        color = c.text,
+                    )
                 }
             }
             is CaptureState.Interrupted -> GlassPill {
@@ -316,6 +1017,44 @@ private fun Transport(state: CaptureState, dispatch: (CaptureIntent) -> Unit, on
     }
 }
 
+@Composable
+private fun RecordSectionTagSheet(
+    title: String,
+    activeTag: SectionTag?,
+    onSelect: (SectionTag, String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    SongPadBottomSheet(onDismiss = onDismiss, title = title) {
+        SectionTag.entries.filter { it != SectionTag.CUSTOM }.forEach { tag ->
+            SheetOptionRow(
+                label = tag.label,
+                meta = if (activeTag == tag) "✓" else null,
+                accent = activeTag == tag,
+                onClick = { onSelect(tag, null) },
+            )
+        }
+        var custom by remember { mutableStateOf("") }
+        Row(
+            modifier = Modifier.padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = custom,
+                onValueChange = { custom = it },
+                modifier = Modifier.weight(1f),
+                label = { Text("Custom label") },
+                singleLine = true,
+            )
+            SecondaryButton(
+                text = "Add",
+                enabled = custom.isNotBlank(),
+                onClick = { onSelect(SectionTag.CUSTOM, custom.trim()) },
+            )
+        }
+    }
+}
+
 private fun interruptionCopy(reason: InterruptionReason): String = when (reason) {
     InterruptionReason.FOCUS_LOSS_TRANSIENT -> "Recording paused — another app took the audio. Resume when you're ready."
     InterruptionReason.FOCUS_LOSS_PERMANENT -> "Recording stopped — another app took over audio. Your take so far is safe."
@@ -323,101 +1062,3 @@ private fun interruptionCopy(reason: InterruptionReason): String = when (reason)
     InterruptionReason.BLUETOOTH_DISCONNECTED -> "Recording paused — a Bluetooth device disconnected."
     InterruptionReason.LOW_STORAGE -> "Recording paused — the device is almost out of storage."
 }
-
-@Composable
-private fun PianoControls(
-    octaveShift: Int,
-    onOctaveShiftChange: (Int) -> Unit,
-    octaveCount: Int,
-    onOctaveCountChange: (Int) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val c = SongPadTheme.colors
-    val baseOctave = 3 + octaveShift
-    val startLabel = "C$baseOctave"
-    val endLabel = "C${baseOctave + octaveCount}"
-
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // Octave stepper: [−] C3–C5 [+]
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-        ) {
-            Text("Octave", style = MaterialTheme.typography.labelSmall, color = c.textSecondary)
-            Surface(
-                onClick = { if (octaveShift > -3) onOctaveShiftChange(octaveShift - 1) },
-                enabled = octaveShift > -3,
-                shape = CircleShape,
-                color = c.surfaceVariant,
-                border = BorderStroke(1.dp, c.divider),
-                modifier = Modifier.size(28.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("−", style = MaterialTheme.typography.labelLarge, color = if (octaveShift > -3) c.text else c.textTertiary)
-                }
-            }
-            Text(
-                "$startLabel–$endLabel",
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = c.text,
-                modifier = Modifier.padding(horizontal = Spacing.xxs),
-            )
-            Surface(
-                onClick = { if (octaveShift < 3) onOctaveShiftChange(octaveShift + 1) },
-                enabled = octaveShift < 3,
-                shape = CircleShape,
-                color = c.surfaceVariant,
-                border = BorderStroke(1.dp, c.divider),
-                modifier = Modifier.size(28.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("+", style = MaterialTheme.typography.labelLarge, color = if (octaveShift < 3) c.text else c.textTertiary)
-                }
-            }
-        }
-
-        // Range stepper: [−] 2 Oct [+]
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-        ) {
-            Text("Range", style = MaterialTheme.typography.labelSmall, color = c.textSecondary)
-            Surface(
-                onClick = { if (octaveCount > 1) onOctaveCountChange(octaveCount - 1) },
-                enabled = octaveCount > 1,
-                shape = CircleShape,
-                color = c.surfaceVariant,
-                border = BorderStroke(1.dp, c.divider),
-                modifier = Modifier.size(28.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("−", style = MaterialTheme.typography.labelLarge, color = if (octaveCount > 1) c.text else c.textTertiary)
-                }
-            }
-            Text(
-                "$octaveCount Oct",
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = c.text,
-                modifier = Modifier.padding(horizontal = Spacing.xxs),
-            )
-            Surface(
-                onClick = { if (octaveCount < 3) onOctaveCountChange(octaveCount + 1) },
-                enabled = octaveCount < 3,
-                shape = CircleShape,
-                color = c.surfaceVariant,
-                border = BorderStroke(1.dp, c.divider),
-                modifier = Modifier.size(28.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("+", style = MaterialTheme.typography.labelLarge, color = if (octaveCount < 3) c.text else c.textTertiary)
-                }
-            }
-        }
-    }
-}
-
-

@@ -7,14 +7,20 @@ import com.songpad.core.model.audio.PlaybackController
 import com.songpad.core.model.audio.PlaybackSource
 import com.songpad.core.model.audio.PlaybackState
 import com.songpad.core.model.audio.RecordingState
+import com.songpad.core.model.data.LyricsRepository
 import com.songpad.core.model.data.SettingsRepository
+import com.songpad.core.model.data.SongRepository
 import com.songpad.core.model.error.CaptureError
 import com.songpad.core.model.error.DomainError
 import com.songpad.core.model.error.domainError
 import com.songpad.core.model.logging.Logger
+import com.songpad.core.model.lyrics.LyricsDocument
+import com.songpad.core.model.lyrics.SectionTag
 import com.songpad.core.model.midi.MidiCaptureEngine
 import com.songpad.core.model.mvi.MviStore
 import com.songpad.core.model.piano.PianoSamplerEngine
+import com.songpad.core.model.song.Song
+import com.songpad.core.model.song.SongFilter
 import com.songpad.core.model.state.PermissionState
 import com.songpad.core.model.take.AudioFormat
 import com.songpad.core.model.take.QualityMode
@@ -24,14 +30,20 @@ import com.songpad.core.model.usecase.DiscardRecordingUseCase
 import com.songpad.core.model.usecase.FinalizeTakeUseCase
 import com.songpad.core.model.usecase.StartRecordingUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -42,6 +54,7 @@ import javax.inject.Inject
  * The constructor is fake-friendly: every dependency is a §15 contract or a pure use case, so the JVM test
  * drives the whole Start → Pause → Review → Save journey without Android.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class CaptureViewModel @Inject constructor(
     private val engine: AudioRecorderEngine,
@@ -54,9 +67,26 @@ class CaptureViewModel @Inject constructor(
     private val finalizeTake: FinalizeTakeUseCase,
     private val discardRecording: DiscardRecordingUseCase,
     private val logger: Logger,
+    private val songs: SongRepository,
+    private val lyricsRepo: LyricsRepository,
 ) : ViewModel() {
 
     private var initialSongId: String? = null
+    private val _boundSongId = MutableStateFlow<String?>(null)
+    val boundSongId: StateFlow<String?> = _boundSongId.asStateFlow()
+
+    val activeSongName: StateFlow<String?> = _boundSongId.flatMapLatest { id ->
+        if (id == null) flowOf(null)
+        else songs.observeSong(id).map { it?.song?.name }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val activeLyrics: StateFlow<LyricsDocument?> = _boundSongId.flatMapLatest { id ->
+        if (id == null) flowOf(null)
+        else lyricsRepo.observeDocument(id)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val availableSongs: StateFlow<List<Song>> = songs.observeSongs(SongFilter.ALL)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val store = MviStore<CaptureState, CaptureIntent, CaptureEffect>(
         initialState = CaptureState.Ready(TakeType.VOICE, null, PermissionState.Unknown, QualityMode.STANDARD),
@@ -109,9 +139,62 @@ class CaptureViewModel @Inject constructor(
 
     /** Called once by the screen with its route argument. */
     fun bind(songId: String?) {
-        if (initialSongId == songId) return
+        if (initialSongId == songId && _boundSongId.value == songId) return
         initialSongId = songId
+        _boundSongId.value = songId
         store.reduce { s -> if (s is CaptureState.Ready) s.copy(songId = songId) else s }
+    }
+
+    /** Binds a song chosen from the "Which song?" picker when toggling the Lyrics layer on a loose idea. */
+    fun selectSongForCapture(songId: String) {
+        initialSongId = songId
+        _boundSongId.value = songId
+        store.reduce { s -> if (s is CaptureState.Ready) s.copy(songId = songId) else s }
+    }
+
+    fun createSongForCapture(name: String, onCreated: (String) -> Unit = {}) {
+        val repo = songs ?: return
+        viewModelScope.launch {
+            repo.create(name.trim()).onSuccess { song ->
+                selectSongForCapture(song.id)
+                lyricsRepo?.insertSection(song.id, SectionTag.VERSE, null, null)
+                onCreated(song.id)
+            }
+        }
+    }
+
+    // ── Live Lyrics Layer actions on RecordScreen ──
+    private var lyricsAutosaveJob: Job? = null
+
+    fun editLyricsSection(sectionId: String, text: String) {
+        val repo = lyricsRepo ?: return
+        lyricsAutosaveJob?.cancel()
+        lyricsAutosaveJob = viewModelScope.launch {
+            delay(350L)
+            repo.updateSectionText(sectionId, text)
+        }
+    }
+
+    fun insertLyricsSection(tag: SectionTag = SectionTag.VERSE, customLabel: String? = null) {
+        val id = _boundSongId.value ?: return
+        val repo = lyricsRepo ?: return
+        viewModelScope.launch {
+            repo.insertSection(id, tag, customLabel, null)
+        }
+    }
+
+    fun retagLyricsSection(sectionId: String, tag: SectionTag, customLabel: String? = null) {
+        val repo = lyricsRepo ?: return
+        viewModelScope.launch {
+            repo.updateSectionTag(sectionId, tag, customLabel)
+        }
+    }
+
+    fun deleteLyricsSection(sectionId: String) {
+        val repo = lyricsRepo ?: return
+        viewModelScope.launch {
+            repo.deleteSection(sectionId)
+        }
     }
 
     fun dispatch(intent: CaptureIntent) = store.dispatch(intent)
@@ -170,12 +253,13 @@ class CaptureViewModel @Inject constructor(
             return
         }
         peakBuffer.clear(); _reviewPeaks.value = FloatArray(0)
-        startRecording(s.type, s.songId)
+        val targetSongId = s.songId ?: _boundSongId.value
+        startRecording(s.type, targetSongId)
             .onSuccess { session ->
                 if (session.type != TakeType.VOICE) midiBinder.beginTake(session.takeId)
                 reduce { CaptureState.Recording(session, 0) }
             }
-            .onFailure { t -> reduce { failedState(t.domainError, s.type, s.songId) } }
+            .onFailure { t -> reduce { failedState(t.domainError, s.type, targetSongId) } }
     }
 
     private suspend fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.pause() {
@@ -243,8 +327,13 @@ class CaptureViewModel @Inject constructor(
             else -> return
         }
         if (playback.state.value.sourceOrNull?.takeId == session.takeId) playback.stop()
-        reduce { CaptureState.Saving(session) }
-        finalizeTake(session, takeName, newSongName)
+        val resolvedSession = if (session.songId == null && _boundSongId.value != null) {
+            session.copy(songId = _boundSongId.value)
+        } else {
+            session
+        }
+        reduce { CaptureState.Saving(resolvedSession) }
+        finalizeTake(resolvedSession, takeName, newSongName)
             .onSuccess { take ->
                 reduce { CaptureState.Saved(take) }
                 val targetSongId = take.songId
@@ -257,7 +346,7 @@ class CaptureViewModel @Inject constructor(
             .onFailure { t ->
                 val error = t.domainError
                 logger.error(TAG, error)
-                reduce { CaptureState.Failed(error, session.type, session.songId) }
+                reduce { CaptureState.Failed(error, resolvedSession.type, resolvedSession.songId) }
             }
     }
 
@@ -287,7 +376,7 @@ class CaptureViewModel @Inject constructor(
         val s = current
         val mode = settings.qualityMode.first()
         if (engine.state.value !is RecordingState.Idle) discardRecording()
-        reduce { CaptureState.Ready(s.type, s.songId ?: initialSongId, PermissionState.Granted.takeIf { s !is CaptureState.PermissionDenied } ?: PermissionState.Unknown, mode) }
+        reduce { CaptureState.Ready(s.type, s.songId ?: _boundSongId.value ?: initialSongId, PermissionState.Granted.takeIf { s !is CaptureState.PermissionDenied } ?: PermissionState.Unknown, mode) }
     }
 
     private fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.onEngine(engineState: RecordingState) {
@@ -375,7 +464,7 @@ class CaptureViewModel @Inject constructor(
         fun create(
             engine: AudioRecorderEngine, playback: PlaybackController, midi: MidiCaptureEngine, midiBinder: MidiTakeBinder,
             piano: PianoSamplerEngine, settings: SettingsRepository, start: StartRecordingUseCase, finalize: FinalizeTakeUseCase,
-            discard: DiscardRecordingUseCase, logger: Logger = Logger.Noop,
-        ) = CaptureViewModel(engine, playback, midi, midiBinder, piano, settings, start, finalize, discard, logger)
+            discard: DiscardRecordingUseCase, songs: SongRepository, lyricsRepo: LyricsRepository, logger: Logger = Logger.Noop,
+        ) = CaptureViewModel(engine, playback, midi, midiBinder, piano, settings, start, finalize, discard, logger, songs, lyricsRepo)
     }
 }

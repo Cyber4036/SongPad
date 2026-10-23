@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -36,6 +37,7 @@ import com.songpad.core.ui.components.InlineDisclosure
 import com.songpad.core.ui.components.PrimaryButton
 import com.songpad.core.ui.components.SecondaryButton
 import com.songpad.core.ui.components.SectionHeader
+import com.songpad.core.ui.components.SettingsGroupCard
 import com.songpad.core.ui.components.SongPadTopBar
 import com.songpad.core.ui.icons.SongPadIcons
 import com.songpad.core.ui.theme.SongPadTheme
@@ -54,7 +56,6 @@ fun ExportScreen(songId: String, onBack: () -> Unit, viewModel: ExportViewModel 
     val context = LocalContext.current
     val c = SongPadTheme.colors
 
-    // "Save to my files / Drive": SAF, no permission, survives uninstall.
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> uri?.let { viewModel.pendingSave = it } }
     LaunchedEffect(viewModel.pendingSave, viewModel.bundlePath) {
         val uri = viewModel.pendingSave ?: return@LaunchedEffect
@@ -66,28 +67,44 @@ fun ExportScreen(songId: String, onBack: () -> Unit, viewModel: ExportViewModel 
     Column(Modifier.fillMaxSize()) {
         SongPadTopBar(title = "Export", onBack = onBack)
         when (val s = state) {
-            is ExportState.Selecting -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Spacing.screen)) {
+            is ExportState.Selecting -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 SectionHeader("What to include")
-                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                Row(
+                    modifier = Modifier.padding(horizontal = Spacing.screen),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                ) {
                     ExportMode.entries.forEach { m -> FilterPill(m.label(), selected = s.request.mode == m, onClick = { viewModel.setMode(m) }) }
                 }
                 if (s.request.mode != ExportMode.LYRICS_ONLY) {
                     SectionHeader("Audio format")
                     val lossless = s.summary?.let { it.losslessTakeCount > 0 && !it.hasLossyTakes } ?: false
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = Spacing.screen),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    ) {
                         ExportAudioFormat.entries.forEach { f ->
                             FilterPill(f.label(lossless), selected = s.request.audioFormat == f, onClick = { viewModel.setFormat(f) })
                         }
                     }
                     if (!disclosureSeen) InlineDisclosure(
                         text = "Takes recorded in Standard quality are stored compressed. Exporting them as WAV makes a bigger file, not a better one — only Lossless-mode takes export bit-exact.",
-                        actionLabel = null, onAction = null, onDismiss = viewModel::markDisclosureSeen, modifier = Modifier.padding(top = Spacing.sm),
+                        actionLabel = null, onAction = null, onDismiss = viewModel::markDisclosureSeen,
+                        modifier = Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.sm),
                     )
                 }
                 SectionHeader("Summary")
-                s.summary?.let { Summary(it, s.request) } ?: Text("Counting…", color = c.textSecondary)
+                SettingsGroupCard {
+                    Column(Modifier.padding(16.dp)) {
+                        s.summary?.let { Summary(it, s.request) } ?: Text("Counting…", color = c.textSecondary)
+                    }
+                }
                 Spacer(Modifier.height(Spacing.xl))
-                PrimaryButton("Prepare export", onClick = viewModel::start, enabled = s.summary != null, modifier = Modifier.fillMaxWidth())
+                PrimaryButton(
+                    text = "Prepare export",
+                    onClick = viewModel::start,
+                    enabled = s.summary != null,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.screen),
+                )
                 Spacer(Modifier.height(Spacing.xxxl))
             }
             is ExportState.Preparing -> Column(Modifier.fillMaxSize().padding(Spacing.screen), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
@@ -99,8 +116,12 @@ fun ExportScreen(songId: String, onBack: () -> Unit, viewModel: ExportViewModel 
                 SecondaryButton("Cancel", onClick = viewModel::cancel)
             }
             is ExportState.Success -> Column(Modifier.fillMaxSize().padding(Spacing.screen)) {
-                Text("Ready", style = MaterialTheme.typography.titleLarge, color = c.success)
-                Text("${s.bundleName} · ${s.byteSize.mb()}", style = MaterialTheme.typography.bodyMedium, color = c.textSecondary)
+                SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Ready to export", style = MaterialTheme.typography.titleLarge, color = c.success)
+                        Text("${s.bundleName} · ${s.byteSize.mb()}", style = MaterialTheme.typography.bodyMedium, color = c.textSecondary)
+                    }
+                }
                 Spacer(Modifier.height(Spacing.xl))
                 PrimaryButton("Save to files", onClick = { saveLauncher.launch(s.bundleName) }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(Spacing.sm))
@@ -142,7 +163,6 @@ private fun copyToUri(context: Context, file: File, uri: Uri) {
     context.contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 16 * 1024) } }
 }
 
-/** "Send this to someone": FileProvider + ACTION_SEND; never a file:// URI (§12.3). */
 private fun share(context: Context, file: File) {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     val send = Intent(Intent.ACTION_SEND).apply {

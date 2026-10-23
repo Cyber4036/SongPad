@@ -6,6 +6,8 @@ import com.songpad.core.audio.recovery.AudioRecoveryManager
 import com.songpad.core.model.audio.PlaybackController
 import com.songpad.core.model.audio.PlaybackSource
 import com.songpad.core.model.audio.PlaybackState
+import com.songpad.core.model.data.SearchEngine
+import com.songpad.core.model.data.SearchResults
 import com.songpad.core.model.data.SettingsRepository
 import com.songpad.core.model.data.SongRepository
 import com.songpad.core.model.data.TakeRepository
@@ -14,6 +16,7 @@ import com.songpad.core.model.error.domainError
 import com.songpad.core.model.logging.Logger
 import com.songpad.core.model.song.Song
 import com.songpad.core.model.song.SongFilter
+import com.songpad.core.model.song.SongStatusTransitions
 import com.songpad.core.model.state.QualityDisclosureState
 import com.songpad.core.model.take.QualityMode
 import com.songpad.core.model.take.Take
@@ -25,6 +28,7 @@ import com.songpad.feature.song.detail.PeaksLoader
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -32,15 +36,19 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
     private val songs: SongRepository,
@@ -53,11 +61,27 @@ class LibraryViewModel @Inject constructor(
     private val playback: PlaybackController,
     private val peaksLoader: PeaksLoader,
     private val logger: Logger,
+    private val searchEngine: SearchEngine,
 ) : ViewModel() {
 
     private val filter = MutableStateFlow(SongFilter.ALL)
     private val peaksCache = HashMap<String, FloatArray>()
     private val peaksVersion = MutableStateFlow(0)
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    val searchResults: StateFlow<SearchResults?> = _searchQuery
+        .debounce(150L)
+        .flatMapLatest { q ->
+            val trimmed = q.trim()
+            if (trimmed.isEmpty()) {
+                flowOf(null)
+            } else {
+                searchEngine.searchGlobal(trimmed).map<SearchResults, SearchResults?> { it }.catch { emit(SearchResults.EMPTY) }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val _sheet = MutableStateFlow<LibrarySheet>(LibrarySheet.None)
     val sheet: StateFlow<LibrarySheet> = _sheet.asStateFlow()
@@ -65,20 +89,10 @@ class LibraryViewModel @Inject constructor(
     private val _errors = MutableSharedFlow<DomainError>(extraBufferCapacity = 4)
     val errors: SharedFlow<DomainError> = _errors.asSharedFlow()
 
-    /**
-     * §4.4 surface 1: the one-time, dismissible first-save disclosure — shown after the first take exists and
-     * until dismissed. §21.3 #1 final decision: only ever shown for Standard — a user who already chose
-     * Lossless has nothing to be told to switch to.
-     */
     private val disclosure = combine(settings.hasSavedFirstTake, settings.firstSaveDisclosureDismissed, settings.qualityMode) { saved, dismissed, mode ->
         if (saved && !dismissed && mode == QualityMode.STANDARD) QualityDisclosureState.FirstSaveDisclosure(mode.label()) else QualityDisclosureState.Hidden
     }
 
-    /**
-     * §9.4 / §21.3 #3 final decision: a non-blocking banner at the top of the Library, never on the Record
-     * screen. Detection itself already runs once on app launch ([AudioRecoveryManager.scanOnce] from
-     * `SongPadApplication`); this ViewModel only renders and drives Keep/Discard.
-     */
     val recoveryState: StateFlow<AudioRecoveryManager.RecoveryState> = recoveryManager.state
 
     val state: StateFlow<LibraryState> = combine(
@@ -99,6 +113,8 @@ class LibraryViewModel @Inject constructor(
     private data class Quad(val filter: SongFilter, val songs: List<Song>, val unassigned: List<Take>, val playback: PlaybackState)
 
     fun setFilter(f: SongFilter) { filter.value = f }
+    fun setSearchQuery(q: String) { _searchQuery.value = q }
+    fun clearSearch() { _searchQuery.value = "" }
 
     // ── Playback of unassigned takes (§7.6 unified playback — Library is their only playback context) ──
     fun play(take: Take) {
@@ -153,6 +169,32 @@ class LibraryViewModel @Inject constructor(
 
     fun dismissDisclosure() = viewModelScope.launch { settings.dismissFirstSaveDisclosure() }
 
+    // ── Song options sheet actions ──
+    fun openSongOptions(song: Song) { _sheet.value = LibrarySheet.SongOptions(song) }
+    fun openRenameSong(song: Song) { _sheet.value = LibrarySheet.RenameSong(song) }
+    fun requestDeleteSong(song: Song) { _sheet.value = LibrarySheet.ConfirmDeleteSong(song) }
+
+    fun renameSong(songId: String, name: String) = viewModelScope.launch {
+        songs.rename(songId, name.trim()).report()
+        closeSheet()
+    }
+
+    fun toggleFinished(song: Song) = viewModelScope.launch {
+        songs.setStatus(song.id, SongStatusTransitions.toggleFinished(song.status)).report()
+        closeSheet()
+    }
+
+    fun toggleArchived(song: Song) = viewModelScope.launch {
+        songs.setStatus(song.id, SongStatusTransitions.toggleArchived(song.status)).report()
+        closeSheet()
+    }
+
+    fun deleteSong(songId: String) = viewModelScope.launch {
+        songs.softDelete(songId).report()
+        closeSheet()
+    }
+
+    // ── Unassigned take sheet actions ──
     fun openAssignSheet(take: Take) = viewModelScope.launch {
         val candidates = songs.observeSongs(SongFilter.ALL).first()
         _sheet.value = LibrarySheet.AssignTake(take, candidates)
@@ -175,8 +217,6 @@ class LibraryViewModel @Inject constructor(
     /** §9.2 two-phase deletion, step 1: release the player before the row is soft-deleted. */
     fun deleteTake(takeId: String) = viewModelScope.launch { stopIfPlaying(takeId); takes.softDelete(takeId).report(); closeSheet() }
 
-    /** A take leaving the unassigned list (assigned to a song, or deleted) can no longer be resolved by
-     * [nowPlayingFrom], which would otherwise leave [playback] silently running with no ribbon to control it. */
     private fun stopIfPlaying(takeId: String) { if (playback.state.value.sourceOrNull?.takeId == takeId) playback.stop() }
 
     // ── recovery banner (§9.4 step 5) ──
@@ -192,7 +232,6 @@ class LibraryViewModel @Inject constructor(
         recoveryManager.set(AudioRecoveryManager.RecoveryState.Restored(kept))
     }
 
-    /** Discard asks for confirmation first (Phase 0 destructive-action rule) — this moves Prompt -> DiscardConfirm. */
     fun requestDiscardRecovered() {
         (recoveryManager.state.value as? AudioRecoveryManager.RecoveryState.Prompt)?.let {
             recoveryManager.set(AudioRecoveryManager.RecoveryState.DiscardConfirm(it.orphans))

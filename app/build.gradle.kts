@@ -34,6 +34,12 @@ android {
     }
 
     signingConfigs {
+        create("debugConfig") {
+            storeFile = file("${rootDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         if (releaseStoreFile != null) {
             create("upload") {
                 storeFile = rootProject.file(releaseStoreFile)
@@ -54,13 +60,14 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             isDebuggable = true
+            signingConfig = signingConfigs.getByName("debugConfig")
         }
         // §19 "build variants": an internal build with release optimisations but debuggable logging.
         create("internal") {
             initWith(getByName("release"))
             applicationIdSuffix = ".internal"
             matchingFallbacks += listOf("release")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("debugConfig")
         }
     }
 

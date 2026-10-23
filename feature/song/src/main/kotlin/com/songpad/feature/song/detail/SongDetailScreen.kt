@@ -7,50 +7,50 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SmallFloatingActionButton
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -63,14 +63,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -80,34 +84,38 @@ import com.songpad.core.model.lyrics.SectionTag
 import com.songpad.core.model.note.Note
 import com.songpad.core.model.note.NoteValidation
 import com.songpad.core.model.song.SongActivity
-import com.songpad.core.model.song.SongStatusTransitions
+import com.songpad.core.model.song.SongStatus
 import com.songpad.core.model.take.Take
 import com.songpad.core.model.usecase.DurationFormat
 import com.songpad.core.ui.components.ConfirmDialog
 import com.songpad.core.ui.components.EmptyState
 import com.songpad.core.ui.components.FilterPill
 import com.songpad.core.ui.components.IconAction
-import com.songpad.core.ui.components.PrimaryButton
+import com.songpad.core.ui.components.RecordButton
 import com.songpad.core.ui.components.RibbonPlayer
 import com.songpad.core.ui.components.SecondaryButton
-import com.songpad.core.ui.components.SectionHeader
+import com.songpad.core.ui.components.SheetOptionRow
 import com.songpad.core.ui.components.SongPadBottomSheet
 import com.songpad.core.ui.components.SongPadTopBar
 import com.songpad.core.ui.components.TagChip
+import com.songpad.core.ui.components.TagTone
 import com.songpad.core.ui.components.TakeListItem
 import com.songpad.core.ui.components.TextInputDialog
 import com.songpad.core.ui.icons.SongPadIcons
+import com.songpad.core.ui.theme.Dimens
 import com.songpad.core.ui.theme.Radii
+import com.songpad.core.ui.theme.SongPadFonts
 import com.songpad.core.ui.theme.SongPadTheme
 import com.songpad.core.ui.theme.Spacing
-import com.songpad.feature.song.library.dateLabel
 import com.songpad.feature.song.library.icon
 import com.songpad.feature.song.library.label
+import com.songpad.feature.song.library.relativeTimeLabel
+import com.songpad.feature.song.library.shortBadge
 import com.songpad.feature.song.library.statusBadge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** Phase 0 §15 Song Home with Lyrics / Takes / Notes tabs. */
+/** Phase 0 §15 Song Home with Lyrics / Takes / Notes tabs, redesigned to match Capture.html. */
 @Composable
 fun SongDetailScreen(
     songId: String,
@@ -120,8 +128,6 @@ fun SongDetailScreen(
     viewModel: SongDetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(songId) { viewModel.bind(songId, initialTab) }
-    // Leaving mid voice note would clear the ViewModel and strand the live recording. Stopping a voice note
-    // is sending it (chat-style), so back first stops-and-saves it and keeps the user here; the next back leaves.
     val recordingVoiceNote by viewModel.recordingVoiceNote.collectAsStateWithLifecycle()
     BackHandler(enabled = recordingVoiceNote) { viewModel.stopVoiceNote() }
     val guardedBack = { if (recordingVoiceNote) viewModel.stopVoiceNote() else onBack() }
@@ -129,7 +135,6 @@ fun SongDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dialog by viewModel.dialog.collectAsStateWithLifecycle()
     val c = SongPadTheme.colors
-    // Landing target from search, or a @mention tap that switched tabs — consumed once the row is found and scrolled to.
     var scrollTarget by remember(songId) { mutableStateOf(targetId) }
     fun navigateToRef(tab: SongDetailTab, id: String) { viewModel.selectTab(tab); scrollTarget = id }
 
@@ -141,66 +146,181 @@ fun SongDetailScreen(
         }
         is SongDetailState.Loaded -> Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
-                var menu by remember { mutableStateOf(false) }
-                SongPadTopBar(title = s.song.name, onBack = { guardedBack() }) {
-                    IconAction(if (s.song.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favorite", onClick = viewModel::toggleFavorite, tint = if (s.song.isFavorite) c.record else c.text)
-                    IconAction(Icons.Filled.Share, "Export", onClick = { onExport(s.song.id) })
-                    Box {
-                        IconAction(Icons.Filled.MoreVert, "More", onClick = { menu = true })
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; viewModel.showDialog(SongDetailDialog.RenameSong) })
-                            DropdownMenuItem(text = { Text(SongStatusTransitions.finishActionLabel(s.song.status)) }, onClick = { menu = false; viewModel.toggleFinished() })
-                            DropdownMenuItem(text = { Text(SongStatusTransitions.archiveActionLabel(s.song.status)) }, onClick = { menu = false; viewModel.toggleArchived() })
-                            DropdownMenuItem(text = { Text("Search in song") }, onClick = { menu = false; onSearchInSong(s.song.id) })
-                            DropdownMenuItem(text = { Text("Delete song", color = c.destructive) }, onClick = { menu = false; viewModel.showDialog(SongDetailDialog.ConfirmDeleteSong) })
-                        }
-                    }
-                }
-                TabRow(selectedTabIndex = s.tab.ordinal, containerColor = c.bg, contentColor = c.accent) {
-                    SongDetailTab.entries.forEach { t -> Tab(selected = s.tab == t, onClick = { viewModel.selectTab(t) }, text = { Text(t.label) }) }
-                }
-                Box(Modifier.weight(1f)) {
-                    when (s.tab) {
-                        SongDetailTab.HOME -> HomeTab(s, onRecord = { onRecord(s.song.id) }, viewModel)
-                        SongDetailTab.LYRICS -> LyricsTab(s.lyrics, viewModel, scrollTarget) { scrollTarget = null }
-                        SongDetailTab.TAKES -> TakesTab(s.takes, viewModel, onRecord = { onRecord(s.song.id) }, scrollTarget = scrollTarget, onScrolled = { scrollTarget = null })
-                        SongDetailTab.NOTES -> NotesTab(
-                            s.notes, viewModel, sections = s.lyrics.documentOrNull()?.sections.orEmpty(), takes = s.takes.takesOrEmpty(),
-                            scrollTarget = scrollTarget, onScrolled = { scrollTarget = null }, onNavigateToRef = ::navigateToRef,
+                // Header action row matching Capture.html: [< Back] ... [Finish/Reopen] [Archive/Unarchive] [Export]
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    IconAction(
+                        icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "Back",
+                        onClick = { guardedBack() },
+                        outlined = true,
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        val isFinished = s.song.status == SongStatus.FINISHED
+                        val isArchived = s.song.status == SongStatus.ARCHIVED
+                        StatusHeaderPill(
+                            label = if (isFinished) "Reopen" else "Finish",
+                            active = isFinished,
+                            activeBg = c.accent,
+                            activeFg = c.onAccent,
+                            onClick = viewModel::toggleFinished,
+                        )
+                        StatusHeaderPill(
+                            label = if (isArchived) "Unarchive" else "Archive",
+                            active = isArchived,
+                            activeBg = c.neutral800,
+                            activeFg = c.bg,
+                            onClick = viewModel::toggleArchived,
+                        )
+                        IconAction(
+                            icon = Icons.Filled.Share,
+                            contentDescription = "Export",
+                            onClick = { onExport(s.song.id) },
+                            outlined = true,
                         )
                     }
                 }
+
+                // Song title + inline pencil edit button + favorite star
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = Spacing.screen, end = Spacing.screen, top = 4.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = s.song.name,
+                        style = MaterialTheme.typography.headlineLarge.copy(
+                            fontFamily = SongPadFonts.heading,
+                            fontSize = 26.sp,
+                            lineHeight = 29.sp,
+                        ),
+                        color = c.text,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clickable { viewModel.showDialog(SongDetailDialog.RenameSong) },
+                    )
+                    Surface(
+                        onClick = { viewModel.showDialog(SongDetailDialog.RenameSong) },
+                        shape = CircleShape,
+                        color = Color.Transparent,
+                        modifier = Modifier.size(30.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = SongPadIcons.EditPencil,
+                                contentDescription = "Rename song",
+                                tint = c.textSecondary,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Surface(
+                        onClick = viewModel::toggleFavorite,
+                        shape = CircleShape,
+                        color = Color.Transparent,
+                        modifier = Modifier.size(34.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (s.song.isFavorite) SongPadIcons.StarFilled else SongPadIcons.StarOutline,
+                                contentDescription = "Favorite",
+                                tint = if (s.song.isFavorite) c.accent else c.textTertiary,
+                                modifier = Modifier.size(19.dp),
+                            )
+                        }
+                    }
+                }
+
+                // Pill sub-tabs (Home, Lyrics, Takes, Notes) matching Capture.html
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = Spacing.screen, end = Spacing.screen, bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SongDetailTab.entries.forEach { t ->
+                        FilterPill(
+                            text = t.label,
+                            selected = s.tab == t,
+                            onClick = { viewModel.selectTab(t) },
+                        )
+                    }
+                }
+
+                Box(Modifier.weight(1f)) {
+                    when (s.tab) {
+                        SongDetailTab.HOME -> HomeTab(
+                            s = s,
+                            vm = viewModel,
+                            onSelectTab = viewModel::selectTab,
+                        )
+                        SongDetailTab.LYRICS -> LyricsTab(
+                            state = s.lyrics,
+                            vm = viewModel,
+                            scrollTarget = scrollTarget,
+                            onScrolled = { scrollTarget = null },
+                        )
+                        SongDetailTab.TAKES -> TakesTab(
+                            state = s.takes,
+                            vm = viewModel,
+                            onRecord = { onRecord(s.song.id) },
+                            scrollTarget = scrollTarget,
+                            onScrolled = { scrollTarget = null },
+                        )
+                        SongDetailTab.NOTES -> NotesTab(
+                            state = s.notes,
+                            vm = viewModel,
+                            sections = s.lyrics.documentOrNull()?.sections.orEmpty(),
+                            takes = s.takes.takesOrEmpty(),
+                            nowPlaying = s.nowPlaying,
+                            scrollTarget = scrollTarget,
+                            onScrolled = { scrollTarget = null },
+                            onNavigateToRef = ::navigateToRef,
+                        )
+                    }
+                }
+
                 s.nowPlaying?.let { np ->
                     RibbonPlayer(
-                        title = np.take.name, subtitle = np.take.type.label(), isPlaying = np.isPlaying, progress = np.progress,
-                        positionLabel = "${DurationFormat.mmss(np.positionMs)} / ${DurationFormat.mmss(np.durationMs)}", peaks = np.peaks,
-                        onPlayPause = { viewModel.togglePlayPause(np.take) }, onSeek = viewModel::seekTo, onDismiss = viewModel::dismissPlayer,
+                        title = np.take.name,
+                        subtitle = np.take.type.label(),
+                        isPlaying = np.isPlaying,
+                        progress = np.progress,
+                        positionLabel = "${DurationFormat.mmss(np.positionMs)} / ${DurationFormat.mmss(np.durationMs)}",
+                        peaks = np.peaks,
+                        onPlayPause = { viewModel.togglePlayPause(np.take) },
+                        onSeek = viewModel::seekTo,
+                        onDismiss = viewModel::dismissPlayer,
                     )
                 }
             }
-            Column(
-                Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 20.dp, bottom = if (s.nowPlaying != null) 96.dp else 24.dp),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (s.tab == SongDetailTab.HOME || s.tab == SongDetailTab.NOTES) {
-                    SmallFloatingActionButton(
-                        onClick = { viewModel.selectTab(SongDetailTab.NOTES); viewModel.composeNote("") },
-                        containerColor = c.surfaceVariant,
-                        contentColor = c.text,
-                    ) {
-                        Icon(Icons.Filled.Edit, "New note")
-                    }
-                }
-                FloatingActionButton(
+
+            // Persistent Record FAB on Song Detail (hidden on Notes tab and when RibbonPlayer is open, matching Capture.html fabVisible)
+            val fabVisible = s.tab != SongDetailTab.NOTES && s.nowPlaying == null
+            if (fabVisible) {
+                RecordButton(
+                    isRecording = false,
                     onClick = { onRecord(s.song.id) },
-                    containerColor = c.record,
-                    contentColor = c.onAccent,
-                ) {
-                    Icon(SongPadIcons.Mic, "Record take")
-                }
+                    size = Dimens.recordFabDetail,
+                    haloWidth = 5.dp,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 22.dp, bottom = 22.dp),
+                )
             }
         }
     }
@@ -210,20 +330,62 @@ fun SongDetailScreen(
         SongDetailDialog.RenameSong -> (state as? SongDetailState.Loaded)?.let { s ->
             TextInputDialog("Rename song", "Song name", s.song.name, "Rename", onConfirm = viewModel::renameSong, onDismiss = viewModel::closeDialog)
         }
+        is SongDetailDialog.TakeOptions -> (state as? SongDetailState.Loaded)?.let { s ->
+            val isPlaying = s.nowPlaying?.take?.id == d.take.id && s.nowPlaying.isPlaying
+            SongPadBottomSheet(
+                onDismiss = viewModel::closeDialog,
+                title = d.take.name,
+                subtitle = "${d.take.type.label()} · ${DurationFormat.mmss(d.take.durationMs)} · ${d.take.meta.createdAt.relativeTimeLabel()}",
+            ) {
+                SheetOptionRow(
+                    label = if (isPlaying) "Pause" else "Play",
+                    onClick = { viewModel.togglePlayPause(d.take); viewModel.closeDialog() },
+                )
+                SheetOptionRow(
+                    label = "Rename",
+                    onClick = { viewModel.showDialog(SongDetailDialog.RenameTake(d.take)) },
+                )
+                SheetOptionRow(
+                    label = "Duplicate",
+                    onClick = { viewModel.duplicateTake(d.take.id) },
+                )
+                SheetOptionRow(
+                    label = "Export take",
+                    onClick = { viewModel.closeDialog(); onExport(s.song.id) },
+                )
+                SheetOptionRow(
+                    label = "Move to another song…",
+                    onClick = { viewModel.openMoveTakeDialog(d.take) },
+                )
+                SheetOptionRow(
+                    label = "Delete take",
+                    destructive = true,
+                    onClick = { viewModel.showDialog(SongDetailDialog.ConfirmDeleteTake(d.take)) },
+                )
+            }
+        }
         is SongDetailDialog.RenameTake -> TextInputDialog("Rename take", "Take name", d.take.name, "Rename", onConfirm = { viewModel.renameTake(d.take.id, it) }, onDismiss = viewModel::closeDialog)
-        is SongDetailDialog.MoveTake -> SongPadBottomSheet(onDismiss = viewModel::closeDialog, title = "Move \"${d.take.name}\" to…") {
+        is SongDetailDialog.MoveTake -> SongPadBottomSheet(
+            onDismiss = viewModel::closeDialog,
+            title = "Move \"${d.take.name}\" to…",
+        ) {
             d.songs.forEach { song ->
-                Text(
-                    song.name,
-                    Modifier.fillMaxWidth().clickable { viewModel.moveTake(d.take.id, song.id) }.padding(Spacing.lg),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = c.text,
+                SheetOptionRow(
+                    label = song.name,
+                    meta = "${song.takeCount} take${if (song.takeCount == 1) "" else "s"}",
+                    onClick = { viewModel.moveTake(d.take.id, song.id) },
                 )
             }
             if (d.songs.isEmpty()) {
                 Text("No other songs available.", Modifier.padding(Spacing.lg), color = c.textSecondary)
             }
         }
+        is SongDetailDialog.RetagSection -> SectionTagBottomSheet(
+            title = "Section tag",
+            activeTag = d.section.tag,
+            onSelectTag = { tag, custom -> viewModel.retagSection(d.section.id, tag, custom) },
+            onDismiss = viewModel::closeDialog,
+        )
         is SongDetailDialog.ConfirmDeleteTake -> ConfirmDialog("Delete \"${d.take.name}\"?", "The take is removed from this song. Its file is purged after 7 days.", "Delete", onConfirm = { viewModel.deleteTake(d.take.id) }, onDismiss = viewModel::closeDialog)
         is SongDetailDialog.ConfirmDeleteSection -> ConfirmDialog("Delete ${d.label}?", "Its lyrics are removed. This can't be undone.", "Delete", onConfirm = { viewModel.deleteSection(d.sectionId) }, onDismiss = viewModel::closeDialog)
         is SongDetailDialog.ConfirmDeleteNote -> ConfirmDialog("Delete note?", "This can't be undone.", "Delete", onConfirm = { viewModel.deleteNote(d.noteId) }, onDismiss = viewModel::closeDialog)
@@ -232,46 +394,189 @@ fun SongDetailScreen(
 }
 
 @Composable
-private fun HomeTab(s: SongDetailState.Loaded, onRecord: () -> Unit, vm: SongDetailViewModel) {
+private fun StatusHeaderPill(
+    label: String,
+    active: Boolean,
+    activeBg: Color,
+    activeFg: Color,
+    onClick: () -> Unit,
+) {
     val c = SongPadTheme.colors
-    LazyColumn(Modifier.fillMaxSize()) {
-        if (s.activity.isEmpty()) item {
-            EmptyState(SongPadIcons.MusicNote, "Nothing here yet", "Record a take, add a lyric section, or jot a note. Everything shows up here, newest first.")
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(Radii.pill),
+        color = if (active) activeBg else c.surface,
+        contentColor = if (active) activeFg else c.textSecondary,
+        border = BorderStroke(1.dp, if (active) activeBg else c.divider),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 12.sp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+    }
+}
+
+@Composable
+private fun HomeTab(
+    s: SongDetailState.Loaded,
+    vm: SongDetailViewModel,
+    onSelectTab: (SongDetailTab) -> Unit,
+) {
+    val c = SongPadTheme.colors
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = Spacing.screen, end = Spacing.screen, top = 2.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        item {
+            Text(
+                text = "RECENT ACTIVITY",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    fontSize = 11.sp,
+                ),
+                color = c.textTertiary,
+                modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
+            )
+        }
+        if (s.activity.isEmpty()) {
+            item {
+                Box(Modifier.fillMaxWidth().padding(vertical = 36.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "Empty song — hit Record or add a lyric section.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.textSecondary,
+                    )
+                }
+            }
         } else {
-            item { SectionHeader("Recent") }
             items(s.activity, key = { it.key() }) { a ->
                 when (a) {
-                    is SongActivity.TakeSaved -> TakeRow(a.take, s.nowPlaying, vm)
-                    is SongActivity.NoteAdded -> Column(Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.sm)) {
-                        TagChip("Note"); Text(a.note.bodyText, color = c.text, style = MaterialTheme.typography.bodyMedium)
-                    }
-                    is SongActivity.SectionEdited -> Column(Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.sm)) {
-                        TagChip(a.section.displayLabel); Text(a.section.bodyText.lineSequence().take(2).joinToString("\n"), color = c.text, style = MaterialTheme.typography.bodyMedium)
-                    }
+                    is SongActivity.TakeSaved -> ActivityFeedCard(
+                        badgeText = a.take.type.shortBadge(),
+                        badgeBg = c.accent100,
+                        badgeFg = c.accent800,
+                        title = "${a.take.name} · ${DurationFormat.mmss(a.take.durationMs)}",
+                        subtitle = "${a.take.type.label()} · ${a.take.meta.createdAt.relativeTimeLabel()}",
+                        onClick = { vm.togglePlayPause(a.take) },
+                    )
+                    is SongActivity.SectionEdited -> ActivityFeedCard(
+                        badgeText = "LYR",
+                        badgeBg = c.accent2_100,
+                        badgeFg = c.accent2_800,
+                        title = a.section.displayLabel,
+                        subtitle = a.section.bodyText.lineSequence().firstOrNull()?.takeIf { it.isNotBlank() } ?: "(empty)",
+                        onClick = { onSelectTab(SongDetailTab.LYRICS) },
+                    )
+                    is SongActivity.NoteAdded -> ActivityFeedCard(
+                        badgeText = "NTE",
+                        badgeBg = c.neutral100,
+                        badgeFg = c.neutral800,
+                        title = a.note.bodyText.ifBlank { if (a.note.voiceTakeId != null) "Voice note" else "Photo note" },
+                        subtitle = "Note · ${a.note.meta.updatedAt.relativeTimeLabel()}",
+                        onClick = { onSelectTab(SongDetailTab.NOTES) },
+                    )
                 }
             }
         }
     }
 }
 
-private fun SongActivity.key() = when (this) { is SongActivity.TakeSaved -> "t-" + take.id; is SongActivity.NoteAdded -> "n-" + note.id; is SongActivity.SectionEdited -> "s-" + section.id }
+@Composable
+private fun ActivityFeedCard(
+    badgeText: String,
+    badgeBg: Color,
+    badgeFg: Color,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    val c = SongPadTheme.colors
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(Radii.card),
+        color = c.surface,
+        border = BorderStroke(1.dp, c.divider),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 15.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(badgeBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = badgeText,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        letterSpacing = 0.4.sp,
+                    ),
+                    color = badgeFg,
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
+                    color = c.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    color = c.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+private fun SongActivity.key() = when (this) {
+    is SongActivity.TakeSaved -> "t-" + take.id
+    is SongActivity.NoteAdded -> "n-" + note.id
+    is SongActivity.SectionEdited -> "s-" + section.id
+}
 
 @Composable
 private fun TakeRow(take: Take, nowPlaying: NowPlaying?, vm: SongDetailViewModel) {
     val c = SongPadTheme.colors
     TakeListItem(
-        name = take.name, typeLabel = take.type.label(), typeIcon = take.type.icon(),
-        durationLabel = DurationFormat.mmss(take.durationMs), metaLine = take.meta.createdAt.dateLabel(), statusBadge = take.statusBadge(),
+        name = take.name,
+        typeLabel = take.type.label(),
+        typeIcon = take.type.icon(),
+        durationLabel = DurationFormat.mmss(take.durationMs),
+        metaLine = take.meta.createdAt.relativeTimeLabel(),
+        statusBadge = take.statusBadge(),
         isPlaying = nowPlaying?.take?.id == take.id && nowPlaying.isPlaying,
-        onClick = { vm.togglePlayPause(take) }, onPlay = { vm.togglePlayPause(take) },
+        onClick = { vm.togglePlayPause(take) },
+        onPlay = { vm.togglePlayPause(take) },
         trailing = {
-            var m by remember { mutableStateOf(false) }
-            Box {
-                IconAction(Icons.Filled.MoreVert, "Take options", onClick = { m = true })
-                DropdownMenu(expanded = m, onDismissRequest = { m = false }) {
-                    DropdownMenuItem(text = { Text("Rename") }, onClick = { m = false; vm.showDialog(SongDetailDialog.RenameTake(take)) })
-                    DropdownMenuItem(text = { Text("Move to song…") }, onClick = { m = false; vm.openMoveTakeDialog(take) })
-                    DropdownMenuItem(text = { Text("Delete", color = c.destructive) }, onClick = { m = false; vm.showDialog(SongDetailDialog.ConfirmDeleteTake(take)) })
+            Surface(
+                onClick = { vm.showDialog(SongDetailDialog.TakeOptions(take)) },
+                shape = CircleShape,
+                color = Color.Transparent,
+                modifier = Modifier.size(32.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "Take options",
+                        tint = c.textSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
         },
@@ -291,11 +596,24 @@ private fun TakesTab(state: TakeListState, vm: SongDetailViewModel, onRecord: ()
     val c = SongPadTheme.colors
     val listState = rememberLazyListState()
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = Spacing.screen, vertical = Spacing.sm)) {
-            TakeFilter.entries.forEach { f -> FilterPill(f.label, selected = state.filter == f, onClick = { vm.setTakeFilter(f) }); Spacer(Modifier.width(Spacing.sm)) }
+        Row(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(start = Spacing.screen, end = Spacing.screen, bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            TakeFilter.entries.forEach { f ->
+                FilterPill(text = f.label, selected = state.filter == f, onClick = { vm.setTakeFilter(f) })
+            }
         }
         when (state) {
-            is TakeListState.Empty -> EmptyState(SongPadIcons.Mic, "No takes", if (state.filter == TakeFilter.ALL) "Record your first take for this song." else "No ${state.filter.label} takes yet.", actionLabel = "Record", onAction = onRecord)
+            is TakeListState.Empty -> EmptyState(
+                icon = SongPadIcons.Mic,
+                title = "No takes",
+                body = if (state.filter == TakeFilter.ALL) "Record your first take for this song." else "No ${state.filter.label} takes yet.",
+                actionLabel = "Record",
+                onAction = onRecord,
+            )
             is TakeListState.Populated -> TakeList(state.takes, null, vm, listState, scrollTarget, onScrolled)
             is TakeListState.Playing -> TakeList(state.takes, state.playing, vm, listState, scrollTarget, onScrolled)
             is TakeListState.Transcoding -> TakeList(state.takes, state.playing, vm, listState, scrollTarget, onScrolled)
@@ -314,11 +632,21 @@ private fun TakeList(takes: List<Take>, np: NowPlaying?, vm: SongDetailViewModel
         val index = takes.indexOfFirst { it.id == scrollTarget }
         if (index >= 0) { listState.animateScrollToItem(index); onScrolled() }
     }
-    LazyColumn(Modifier.fillMaxSize(), state = listState) { items(takes, key = { it.id }) { TakeRow(it, np, vm) }; item { Spacer(Modifier.height(Spacing.xxxl)) } }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        state = listState,
+        contentPadding = PaddingValues(start = Spacing.screen, end = Spacing.screen, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        items(takes, key = { it.id }) { TakeRow(it, np, vm) }
+    }
 }
 
 private fun LyricsState.documentOrNull(): LyricsDocument? = when (this) {
-    is LyricsState.Editing -> document; is LyricsState.Autosaved -> document; is LyricsState.SectionInserting -> document; LyricsState.Empty -> null
+    is LyricsState.Editing -> document
+    is LyricsState.Autosaved -> document
+    is LyricsState.SectionInserting -> document
+    LyricsState.Empty -> null
 }
 
 @Composable
@@ -327,16 +655,43 @@ private fun LyricsTab(state: LyricsState, vm: SongDetailViewModel, scrollTarget:
     val doc = state.documentOrNull()
     val listState = rememberLazyListState()
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = Spacing.screen, vertical = Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
-            SecondaryButton("Add section", onClick = { vm.beginInsertSection(null) })
-            Spacer(Modifier.weight(1f))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = Spacing.screen, end = Spacing.screen, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
             Text(
-                when (state) { is LyricsState.Editing -> if (state.dirtySectionId != null) "Saving…" else ""; is LyricsState.Autosaved -> "Saved"; else -> "" },
-                style = MaterialTheme.typography.labelSmall, color = c.textTertiary,
+                text = when (state) {
+                    is LyricsState.Editing -> if (state.dirtySectionId != null) "Saving…" else "All changes saved"
+                    is LyricsState.Autosaved -> "All changes saved"
+                    else -> "All changes saved"
+                },
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                color = c.textTertiary,
             )
+            Surface(
+                onClick = { vm.beginInsertSection(null) },
+                shape = RoundedCornerShape(Radii.pill),
+                color = c.accent100,
+                contentColor = c.accent800,
+            ) {
+                Text(
+                    text = "+ Section",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 12.sp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
         }
         if (doc == null || doc.sections.isEmpty()) {
-            EmptyState(SongPadIcons.Lyrics, "No lyrics yet", "Add a section — Verse, Chorus, Bridge — and write inside it. Sections can stay empty.", actionLabel = "Add section", onAction = { vm.beginInsertSection(null) })
+            EmptyState(
+                icon = SongPadIcons.Lyrics,
+                title = "No lyrics yet",
+                body = "Add a section — Verse, Chorus, Bridge — and write inside it. Sections can stay empty.",
+                actionLabel = "Add section",
+                onAction = { vm.beginInsertSection(null) },
+            )
         } else {
             val sorted = doc.sections.sortedBy { it.sortOrder }
             LaunchedEffect(scrollTarget, sorted) {
@@ -344,155 +699,567 @@ private fun LyricsTab(state: LyricsState, vm: SongDetailViewModel, scrollTarget:
                 val index = sorted.indexOfFirst { it.id == scrollTarget }
                 if (index >= 0) { listState.animateScrollToItem(index); onScrolled() }
             }
-            LazyColumn(Modifier.fillMaxSize(), state = listState) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(start = Spacing.screen, end = Spacing.screen, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 itemsIndexed(sorted, key = { _, it -> it.id }) { index, section ->
-                    SectionEditor(
-                        section, vm, canMoveUp = index > 0, canMoveDown = index < sorted.lastIndex,
-                        onMoveUp = { vm.moveSection(section.id, index - 1) }, onMoveDown = { vm.moveSection(section.id, index + 1) },
+                    SectionEditorCard(
+                        section = section,
+                        vm = vm,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < sorted.lastIndex,
+                        onMoveUp = { vm.moveSection(section.id, index - 1) },
+                        onMoveDown = { vm.moveSection(section.id, index + 1) },
                     )
                 }
-                item { Spacer(Modifier.height(Spacing.xxxl)) }
             }
         }
     }
     if (state is LyricsState.SectionInserting) {
-        SongPadBottomSheet(onDismiss = vm::cancelInsertSection, title = "Add section") {
-            SectionTag.entries.filter { it != SectionTag.CUSTOM }.forEach { tag ->
-                Text(tag.label, Modifier.fillMaxWidth().clickable { vm.insertSection(tag) }.padding(Spacing.lg), color = c.text, style = MaterialTheme.typography.bodyLarge)
-            }
-            var custom by remember { mutableStateOf("") }
-            Row(Modifier.padding(Spacing.lg), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(custom, { custom = it }, Modifier.weight(1f), label = { Text("Custom label") }, singleLine = true)
-                Spacer(Modifier.width(Spacing.sm))
-                SecondaryButton("Add", enabled = custom.isNotBlank(), onClick = { vm.insertSection(SectionTag.CUSTOM, custom.trim()) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun SectionEditor(section: Section, vm: SongDetailViewModel, canMoveUp: Boolean, canMoveDown: Boolean, onMoveUp: () -> Unit, onMoveDown: () -> Unit) {
-    val c = SongPadTheme.colors
-    var text by remember(section.id) { mutableStateOf(section.bodyText) }
-    Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.screen, vertical = Spacing.sm)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(section.displayLabel, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), color = c.accent2)
-            Spacer(Modifier.weight(1f))
-            IconAction(Icons.Filled.KeyboardArrowUp, "Move up", enabled = canMoveUp, onClick = onMoveUp)
-            IconAction(Icons.Filled.KeyboardArrowDown, "Move down", enabled = canMoveDown, onClick = onMoveDown)
-            IconAction(Icons.Filled.Delete, "Delete section", onClick = { vm.showDialog(SongDetailDialog.ConfirmDeleteSection(section.id, section.displayLabel)) })
-        }
-        OutlinedTextField(
-            value = text, onValueChange = { text = it; vm.editSection(section.id, it) },
-            modifier = Modifier.fillMaxWidth(), placeholder = { Text("Write here…") }, minLines = 2,
-            keyboardOptions = KeyboardOptions(capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences),
+        SectionTagBottomSheet(
+            title = "Add section",
+            activeTag = null,
+            onSelectTag = { tag, custom -> vm.insertSection(tag, custom) },
+            onDismiss = vm::cancelInsertSection,
         )
     }
 }
 
 @Composable
-private fun NotesTab(
-    state: NotesState, vm: SongDetailViewModel, sections: List<Section>, takes: List<Take>,
-    scrollTarget: String?, onScrolled: () -> Unit, onNavigateToRef: (SongDetailTab, String) -> Unit,
+internal fun SectionTagBottomSheet(
+    title: String,
+    activeTag: SectionTag?,
+    onSelectTag: (SectionTag, String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    SongPadBottomSheet(onDismiss = onDismiss, title = title) {
+        SectionTag.entries.filter { it != SectionTag.CUSTOM }.forEach { tag ->
+            SheetOptionRow(
+                label = tag.label,
+                meta = if (activeTag == tag) "✓" else null,
+                accent = activeTag == tag,
+                onClick = { onSelectTag(tag, null) },
+            )
+        }
+        var custom by remember { mutableStateOf("") }
+        Row(
+            modifier = Modifier.padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = custom,
+                onValueChange = { custom = it },
+                modifier = Modifier.weight(1f),
+                label = { Text("Custom label") },
+                singleLine = true,
+            )
+            SecondaryButton(
+                text = "Add",
+                enabled = custom.isNotBlank(),
+                onClick = { onSelectTag(SectionTag.CUSTOM, custom.trim()) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SectionEditorCard(
+    section: Section,
+    vm: SongDetailViewModel,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
 ) {
     val c = SongPadTheme.colors
-    val listState = rememberLazyListState()
-    val context = LocalContext.current
-    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) vm.beginVoiceNote() }
-    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { vm.attachMedia(it.toString()) } }
-
-    Column(Modifier.fillMaxSize()) {
-        val draft = when (state) { is NotesState.Composing -> state.draftText; is NotesState.InvalidEmpty -> state.draftText; is NotesState.MediaAttached -> state.draftText; is NotesState.VoiceRecording -> state.draftText; else -> null }
-        // §15 NoteRepository.update is bodyText-only — attach/voice controls only ever show for a *new* note.
-        val canAttach = (state as? NotesState.Composing)?.editingNoteId == null
-        if (draft != null) {
-            Column(Modifier.padding(Spacing.screen)) {
-                if (state is NotesState.MediaAttached) {
-                    Box(Modifier.padding(bottom = Spacing.sm)) {
-                        NotePhotoThumbnail(state.mediaUri)
-                        IconAction(Icons.Filled.Close, "Remove photo", onClick = vm::removeMedia, modifier = Modifier.align(Alignment.TopEnd), filled = true)
-                    }
-                }
-                if (state is NotesState.VoiceRecording) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = Spacing.sm)) {
-                        Icon(SongPadIcons.Mic, null, tint = c.accent)
-                        Spacer(Modifier.width(Spacing.sm))
-                        Text("Recording voice note…", color = c.text)
-                    }
-                }
-                OutlinedTextField(
-                    value = draft, onValueChange = vm::updateDraftText,
-                    modifier = Modifier.fillMaxWidth(), placeholder = { Text("Note… use @Chorus or @Take name to reference") }, minLines = 3,
-                    isError = state is NotesState.InvalidEmpty,
-                    supportingText = if (state is NotesState.InvalidEmpty) ({ Text("A note needs text, a voice note, or an attachment.") }) else null,
+    var text by remember(section.id, section.bodyText) { mutableStateOf(section.bodyText) }
+    Surface(
+        shape = RoundedCornerShape(Radii.card),
+        color = c.surface,
+        border = BorderStroke(1.dp, c.divider),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                TagChip(
+                    text = section.displayLabel,
+                    tone = TagTone.Accent,
+                    onClick = { vm.showDialog(SongDetailDialog.RetagSection(section)) },
                 )
-                Row(Modifier.padding(top = Spacing.sm), horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
-                    if (state is NotesState.VoiceRecording) {
-                        IconAction(SongPadIcons.Stop, "Stop recording", onClick = vm::stopVoiceNote, filled = true)
-                        SecondaryButton("Cancel", onClick = vm::cancelVoiceNote)
-                    } else {
-                        PrimaryButton("Save", onClick = vm::saveNote, enabled = draft.isNotBlank() || state is NotesState.MediaAttached)
-                        SecondaryButton("Cancel", onClick = vm::cancelNote)
-                        if (canAttach) {
-                            Spacer(Modifier.weight(1f))
-                            IconAction(
-                                Icons.Filled.AddPhotoAlternate, "Attach photo",
-                                onClick = { photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                            )
-                            IconAction(SongPadIcons.Mic, "Record voice note", onClick = {
-                                val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                                if (granted) vm.beginVoiceNote() else micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            })
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (canMoveUp) {
+                        Surface(
+                            onClick = onMoveUp,
+                            shape = CircleShape,
+                            color = Color.Transparent,
+                            modifier = Modifier.size(28.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.KeyboardArrowUp, "Move up", tint = c.textTertiary, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                    if (canMoveDown) {
+                        Surface(
+                            onClick = onMoveDown,
+                            shape = CircleShape,
+                            color = Color.Transparent,
+                            modifier = Modifier.size(28.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.KeyboardArrowDown, "Move down", tint = c.textTertiary, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                    Surface(
+                        onClick = { vm.showDialog(SongDetailDialog.ConfirmDeleteSection(section.id, section.displayLabel)) },
+                        shape = CircleShape,
+                        color = Color.Transparent,
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Close, "Delete section", tint = c.textTertiary, modifier = Modifier.size(15.dp))
                         }
                     }
                 }
             }
-        } else {
-            Row(Modifier.padding(Spacing.screen)) { PrimaryButton("New note", onClick = { vm.composeNote("") }) }
-        }
-        if (state.notes.isEmpty() && draft == null) {
-            EmptyState(SongPadIcons.Lyrics, "No notes", "Capture a thought about this song. Reference a section or take with @.")
-        } else {
-            LaunchedEffect(scrollTarget, state.notes) {
-                if (scrollTarget == null) return@LaunchedEffect
-                val index = state.notes.indexOfFirst { it.id == scrollTarget }
-                if (index >= 0) { listState.animateScrollToItem(index); onScrolled() }
-            }
-            LazyColumn(Modifier.fillMaxSize(), state = listState) {
-                items(state.notes, key = { it.id }) { note -> NoteRow(note, vm, sections, takes, onNavigateToRef) }
-                item { Spacer(Modifier.height(Spacing.xxxl)) }
-            }
+            BasicTextField(
+                value = text,
+                onValueChange = { text = it; vm.editSection(section.id, it) },
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = c.text,
+                    fontSize = 15.sp,
+                    lineHeight = 23.sp,
+                ),
+                cursorBrush = SolidColor(c.accent),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                decorationBox = { innerTextField ->
+                    Box(Modifier.fillMaxWidth()) {
+                        if (text.isEmpty()) {
+                            Text(
+                                text = "Type what you hear…",
+                                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 23.sp),
+                                color = c.textTertiary,
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
+            )
         }
     }
 }
 
+private val MentionTriggerRegex = Regex("""@([\w\s]*)$""")
+
 @Composable
-private fun NoteRow(note: Note, vm: SongDetailViewModel, sections: List<Section>, takes: List<Take>, onNavigateToRef: (SongDetailTab, String) -> Unit) {
+private fun NotesTab(
+    state: NotesState,
+    vm: SongDetailViewModel,
+    sections: List<Section>,
+    takes: List<Take>,
+    nowPlaying: NowPlaying?,
+    scrollTarget: String?,
+    onScrolled: () -> Unit,
+    onNavigateToRef: (SongDetailTab, String) -> Unit,
+) {
     val c = SongPadTheme.colors
-    Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.screen, vertical = Spacing.sm)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(note.meta.updatedAt.dateLabel(), style = MaterialTheme.typography.labelSmall, color = c.textTertiary)
-            Spacer(Modifier.weight(1f))
-            IconAction(Icons.Filled.Edit, "Edit note", onClick = { vm.composeNote(note.bodyText, note.id) })
-            IconAction(Icons.Filled.Delete, "Delete note", onClick = { vm.showDialog(SongDetailDialog.ConfirmDeleteNote(note.id)) })
+    val listState = rememberLazyListState()
+    val context = LocalContext.current
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            if (state !is NotesState.Composing) vm.composeNote("")
+            vm.beginVoiceNote()
         }
-        note.mediaUri?.let { uri -> NotePhotoThumbnail(uri, Modifier.padding(bottom = Spacing.sm)) }
-        if (note.voiceTakeId != null) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = Spacing.sm)) {
-                Icon(SongPadIcons.Mic, null, tint = c.textTertiary, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(Spacing.xs))
-                Text("Voice note — play from the Takes tab", style = MaterialTheme.typography.labelSmall, color = c.textTertiary)
+    }
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri?.let {
+            if (state !is NotesState.Composing) vm.composeNote("")
+            vm.attachMedia(it.toString())
+        }
+    }
+
+    val draft = when (state) {
+        is NotesState.Composing -> state.draftText
+        is NotesState.InvalidEmpty -> state.draftText
+        is NotesState.MediaAttached -> state.draftText
+        is NotesState.VoiceRecording -> state.draftText
+        else -> ""
+    }
+    val editingNoteId = (state as? NotesState.Composing)?.editingNoteId
+    val canAttach = editingNoteId == null
+    val mentionMatch = remember(draft) { MentionTriggerRegex.find(draft) }
+    val mentionQuery = mentionMatch?.groupValues?.getOrNull(1)?.trim().orEmpty()
+
+    Column(Modifier.fillMaxSize()) {
+        // Chat-bubble message stream
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            if (state.notes.isEmpty()) {
+                Box(Modifier.fillMaxSize().padding(horizontal = Spacing.screen, vertical = 24.dp), contentAlignment = Alignment.TopCenter) {
+                    Text(
+                        text = "No notes yet. Jot a thought below — type @ to tag a section or take.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.textSecondary,
+                    )
+                }
+            } else {
+                LaunchedEffect(scrollTarget, state.notes) {
+                    if (scrollTarget == null) return@LaunchedEffect
+                    val index = state.notes.indexOfFirst { it.id == scrollTarget }
+                    if (index >= 0) { listState.animateScrollToItem(index); onScrolled() }
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    state = listState,
+                    contentPadding = PaddingValues(horizontal = Spacing.screen, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(state.notes, key = { it.id }) { note ->
+                        NoteBubbleRow(
+                            note = note,
+                            vm = vm,
+                            sections = sections,
+                            takes = takes,
+                            nowPlaying = nowPlaying,
+                            onNavigateToRef = onNavigateToRef,
+                        )
+                    }
+                    item { Spacer(Modifier.height(16.dp)) }
+                }
+            }
+
+            // Live @mention autocomplete popup pinned at the bottom of the scroll area above composer
+            if (mentionMatch != null && (sections.isNotEmpty() || takes.isNotEmpty())) {
+                val matchingSections = sections.filter { mentionQuery.isEmpty() || it.displayLabel.contains(mentionQuery, ignoreCase = true) }
+                val matchingTakes = takes.filter { mentionQuery.isEmpty() || it.name.contains(mentionQuery, ignoreCase = true) }
+                if (matchingSections.isNotEmpty() || matchingTakes.isNotEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = c.surface,
+                        border = BorderStroke(1.dp, c.divider),
+                        shadowElevation = 6.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.screen, vertical = 6.dp),
+                    ) {
+                        Column(Modifier.padding(8.dp)) {
+                            Text(
+                                text = "REFERENCE A SECTION OR TAKE",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.8.sp,
+                                ),
+                                color = c.textTertiary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                            matchingSections.take(4).forEach { sec ->
+                                Surface(
+                                    onClick = {
+                                        val replaced = draft.replace(MentionTriggerRegex, "@${sec.displayLabel} ")
+                                        vm.updateDraftText(replaced)
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color.Transparent,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        text = "@${sec.displayLabel}",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
+                                        color = c.accent,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                    )
+                                }
+                            }
+                            matchingTakes.take(3).forEach { take ->
+                                Surface(
+                                    onClick = {
+                                        val replaced = draft.replace(MentionTriggerRegex, "@${take.name} ")
+                                        vm.updateDraftText(replaced)
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color.Transparent,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        text = "@${take.name}",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
+                                        color = c.accent2,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
-        if (note.bodyText.isNotBlank()) NoteBody(note.bodyText, sections, takes, c.text, c.accent, onNavigateToRef)
+
+        // Pinned bottom composer bar matching Capture.html
+        HorizontalDivider(color = c.divider, thickness = 1.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(c.bg.copy(alpha = 0.96f))
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (editingNoteId != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Editing note", style = MaterialTheme.typography.labelSmall, color = c.accent)
+                    Text(
+                        "Cancel",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = c.textSecondary,
+                        modifier = Modifier.clickable { vm.cancelNote() },
+                    )
+                }
+            }
+            if (state is NotesState.MediaAttached) {
+                Box(Modifier.padding(start = 4.dp)) {
+                    NotePhotoThumbnail(state.mediaUri)
+                    IconAction(Icons.Filled.Close, "Remove photo", onClick = vm::removeMedia, modifier = Modifier.align(Alignment.TopEnd), filled = true)
+                }
+            }
+            if (state is NotesState.VoiceRecording) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(SongPadIcons.Mic, null, tint = c.record, modifier = Modifier.size(18.dp))
+                        Text("Recording voice note…", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = c.record)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        SecondaryButton("Cancel", onClick = vm::cancelVoiceNote)
+                        IconAction(SongPadIcons.Check, "Save voice note", onClick = vm::stopVoiceNote, accentFilled = true)
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (canAttach) {
+                        Surface(
+                            onClick = { photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            shape = CircleShape,
+                            color = c.surface,
+                            border = BorderStroke(1.dp, c.divider),
+                            modifier = Modifier.size(38.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.AddPhotoAlternate, "Attach photo", tint = c.textSecondary, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        Surface(
+                            onClick = {
+                                if (state !is NotesState.Composing) vm.composeNote(draft)
+                                val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                if (granted) vm.beginVoiceNote() else micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                            shape = CircleShape,
+                            color = c.surface,
+                            border = BorderStroke(1.dp, c.divider),
+                            modifier = Modifier.size(38.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(SongPadIcons.Mic, "Record voice note", tint = c.textSecondary, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+
+                    // Pill input field
+                    Surface(
+                        shape = RoundedCornerShape(Radii.pill),
+                        color = c.surface,
+                        border = BorderStroke(1.dp, if (state is NotesState.InvalidEmpty) c.destructive else c.divider),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        BasicTextField(
+                            value = draft,
+                            onValueChange = { vm.updateDraftText(it) },
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = c.text, fontSize = 14.sp),
+                            cursorBrush = SolidColor(c.accent),
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                            decorationBox = { innerTextField ->
+                                Box(contentAlignment = Alignment.CenterStart) {
+                                    if (draft.isEmpty()) {
+                                        Text(
+                                            text = "Jot a note… (@section to link)",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                                            color = c.textTertiary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            },
+                        )
+                    }
+
+                    val canSend = draft.isNotBlank() || state is NotesState.MediaAttached
+                    Surface(
+                        onClick = {
+                            if (state !is NotesState.Composing && state !is NotesState.MediaAttached) {
+                                vm.composeNote(draft)
+                            }
+                            vm.saveNote()
+                        },
+                        enabled = canSend,
+                        shape = CircleShape,
+                        color = if (canSend) c.accent else c.surface,
+                        contentColor = if (canSend) c.onAccent else c.textTertiary,
+                        border = if (canSend) null else BorderStroke(1.dp, c.divider),
+                        modifier = Modifier.size(38.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(SongPadIcons.Check, "Save note", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
-/** Renders `@mention` spans as tappable text, resolved live against this song's current sections/takes —
- * the same case-insensitive displayLabel/name match [SongDetailViewModel.resolveMentions] uses at save time.
- * An unmatched mention (typo, deleted section) just renders as plain text, same as it does unresolved in the model. */
 @Composable
-private fun NoteBody(text: String, sections: List<Section>, takes: List<Take>, textColor: Color, mentionColor: Color, onNavigateToRef: (SongDetailTab, String) -> Unit) {
+private fun NoteBubbleRow(
+    note: Note,
+    vm: SongDetailViewModel,
+    sections: List<Section>,
+    takes: List<Take>,
+    nowPlaying: NowPlaying?,
+    onNavigateToRef: (SongDetailTab, String) -> Unit,
+) {
+    val c = SongPadTheme.colors
+    val isVoice = note.voiceTakeId != null
+    val voiceTake = remember(note.voiceTakeId, takes) { takes.firstOrNull { it.id == note.voiceTakeId } }
+    val isPlayingVoice = voiceTake != null && nowPlaying?.take?.id == voiceTake.id && nowPlaying.isPlaying
+
+    val bubbleShape = RoundedCornerShape(
+        topStart = 22.dp,
+        topEnd = 22.dp,
+        bottomEnd = 6.dp,
+        bottomStart = 22.dp,
+    )
+    val bubbleBg = if (isVoice) c.accent2_100 else c.accent100
+    val bubbleText = if (isVoice) c.accent2_800 else c.accent800
+    val bubbleBorder = if (isVoice) c.accent2.copy(alpha = 0.35f) else c.accent200
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.End,
+    ) {
+        Surface(
+            shape = bubbleShape,
+            color = bubbleBg,
+            border = BorderStroke(1.dp, bubbleBorder),
+            modifier = Modifier
+                .widthIn(max = 310.dp)
+                .then(
+                    if (voiceTake != null) Modifier.clickable { vm.togglePlayPause(voiceTake) } else Modifier
+                ),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                note.mediaUri?.let { uri ->
+                    NotePhotoThumbnail(uri, Modifier.padding(bottom = 8.dp))
+                }
+                if (isVoice) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(bottom = if (note.bodyText.isNotBlank()) 6.dp else 0.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(c.accent2),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = if (isPlayingVoice) SongPadIcons.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (isPlayingVoice) "Pause voice note" else "Play voice note",
+                                tint = c.onAccent,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                        Text(
+                            text = if (voiceTake != null) "Voice note · ${DurationFormat.mmss(voiceTake.durationMs)}" else "Voice note",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
+                            color = bubbleText,
+                        )
+                    }
+                }
+                if (note.bodyText.isNotBlank()) {
+                    NoteBody(
+                        text = note.bodyText,
+                        sections = sections,
+                        takes = takes,
+                        textColor = bubbleText,
+                        mentionColor = c.accent,
+                        onNavigateToRef = onNavigateToRef,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(3.dp))
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = note.meta.updatedAt.relativeTimeLabel(),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                color = c.textTertiary,
+            )
+            if (!isVoice) {
+                Text(
+                    text = "Edit",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+                    color = c.textTertiary,
+                    modifier = Modifier.clickable { vm.composeNote(note.bodyText, note.id) },
+                )
+            }
+            Text(
+                text = "Delete",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+                color = c.textTertiary,
+                modifier = Modifier.clickable { vm.showDialog(SongDetailDialog.ConfirmDeleteNote(note.id)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun NoteBody(
+    text: String,
+    sections: List<Section>,
+    takes: List<Take>,
+    textColor: Color,
+    mentionColor: Color,
+    onNavigateToRef: (SongDetailTab, String) -> Unit,
+) {
     data class Ref(val tab: SongDetailTab, val id: String)
     val refs = mutableListOf<Ref?>()
     val annotated = buildAnnotatedString {
@@ -502,9 +1269,13 @@ private fun NoteBody(text: String, sections: List<Section>, takes: List<Take>, t
             val token = match.groupValues[1].trim()
             val section = sections.firstOrNull { it.displayLabel.equals(token, ignoreCase = true) }
             val take = takes.firstOrNull { it.name.equals(token, ignoreCase = true) }
-            val ref = when { section != null -> Ref(SongDetailTab.LYRICS, section.id); take != null -> Ref(SongDetailTab.TAKES, take.id); else -> null }
+            val ref = when {
+                section != null -> Ref(SongDetailTab.LYRICS, section.id)
+                take != null -> Ref(SongDetailTab.TAKES, take.id)
+                else -> null
+            }
             if (ref != null) {
-                withStyle(SpanStyle(color = mentionColor, fontWeight = FontWeight.SemiBold)) { append(match.value) }
+                withStyle(SpanStyle(color = mentionColor, fontWeight = FontWeight.Bold)) { append(match.value) }
             } else {
                 append(match.value)
             }
@@ -513,14 +1284,16 @@ private fun NoteBody(text: String, sections: List<Section>, takes: List<Take>, t
         }
         append(text.substring(cursor))
     }
-    ClickableText(annotated, style = MaterialTheme.typography.bodyMedium.copy(color = textColor)) { offset ->
+    ClickableText(
+        text = annotated,
+        style = MaterialTheme.typography.bodyMedium.copy(color = textColor, fontSize = 14.sp, lineHeight = 20.sp),
+    ) { offset ->
         NoteValidation.mentionMatches(text).forEachIndexed { i, match ->
             if (offset in match.range.first..match.range.last) refs.getOrNull(i)?.let { onNavigateToRef(it.tab, it.id) }
         }
     }
 }
 
-/** Decoded off the main thread and downsampled — this is a note attachment thumbnail, not a full viewer. */
 @Composable
 private fun NotePhotoThumbnail(uriString: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -537,4 +1310,3 @@ private fun NotePhotoThumbnail(uriString: String, modifier: Modifier = Modifier)
         bitmap?.let { Image(it.asImageBitmap(), contentDescription = "Attached photo", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
     }
 }
-

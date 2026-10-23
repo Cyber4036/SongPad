@@ -33,13 +33,20 @@ class SongRepositoryImpl @Inject constructor(
 
     private val songs get() = db.songDao()
 
-    override fun observeSongs(filter: SongFilter): Flow<List<Song>> = when (filter) {
-        SongFilter.ALL -> songs.observeNotArchived()
-        SongFilter.FAVORITES -> songs.observeFavorites()
-        SongFilter.ONGOING -> songs.observeByStatus(SongStatus.ONGOING.name)
-        SongFilter.FINISHED -> songs.observeByStatus(SongStatus.FINISHED.name)
-        SongFilter.ARCHIVED -> songs.observeByStatus(SongStatus.ARCHIVED.name)
-    }.map { list -> list.map { it.toDomain() } }
+    override fun observeSongs(filter: SongFilter): Flow<List<Song>> {
+        val raw = when (filter) {
+            SongFilter.ALL -> songs.observeNotArchived()
+            SongFilter.FAVORITES -> songs.observeFavorites()
+            SongFilter.ONGOING -> songs.observeByStatus(SongStatus.ONGOING.name)
+            SongFilter.FINISHED -> songs.observeByStatus(SongStatus.FINISHED.name)
+            SongFilter.ARCHIVED -> songs.observeByStatus(SongStatus.ARCHIVED.name)
+        }
+        return combine(raw, db.takeDao().observeCountsBySong(), db.lyricsDao().observeSectionCountsBySong()) { list, takeCounts, secCounts ->
+            val takesMap = takeCounts.associate { it.songId to it.cnt }
+            val secsMap = secCounts.associate { it.songId to it.cnt }
+            list.map { it.toDomain().copy(takeCount = takesMap[it.id] ?: 0, sectionCount = secsMap[it.id] ?: 0) }
+        }
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun observeSong(songId: String): Flow<SongDetail?> = songs.observe(songId).flatMapLatest { song ->

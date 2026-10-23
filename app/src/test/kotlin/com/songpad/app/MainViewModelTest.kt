@@ -4,6 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import com.songpad.app.navigation.DeepLinkResolver
 import com.songpad.app.navigation.LibraryKey
 import com.songpad.app.navigation.SongDetailKey
+import com.songpad.core.data.testing.FakeNudgeRepository
 import com.songpad.core.data.testing.FakeSettingsRepository
 import com.songpad.core.data.testing.FakeSongRepository
 import com.songpad.core.data.testing.FakeTakeRepository
@@ -36,11 +37,12 @@ class MainViewModelTest {
     private val store = InMemoryStore()
     private val songs = FakeSongRepository(store)
     private val takes = FakeTakeRepository(store)
+    private val nudges = FakeNudgeRepository(store)
 
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
 
-    private fun vm() = MainViewModel(FakeSettingsRepository(), DeepLinkResolver(songs, takes))
+    private fun vm() = MainViewModel(FakeSettingsRepository(), DeepLinkResolver(songs, takes), nudges)
 
     @Test
     fun `opening a take nudge lands on its song's Takes tab, scrolled to that take`() = runTest(dispatcher) {
@@ -78,7 +80,7 @@ class MainViewModelTest {
     fun `themeVariant is seeded with persisted value on creation`() = runTest(dispatcher) {
         val settings = FakeSettingsRepository()
         settings.setThemeVariant("MELODY_DARK")
-        val vm = MainViewModel(settings, DeepLinkResolver(songs, takes))
+        val vm = MainViewModel(settings, DeepLinkResolver(songs, takes), nudges)
         assertThat(vm.themeVariant.value).isEqualTo("MELODY_DARK")
     }
 }

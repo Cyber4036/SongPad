@@ -107,4 +107,84 @@ object SongPadIcons {
             }
         }
     }
+
+    val Bell: ImageVector by lazy {
+        icon("Bell") {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.4f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+                moveTo(6f, 9.5f)
+                curveTo(6f, 6.18f, 8.68f, 3.5f, 12f, 3.5f)
+                curveTo(15.32f, 3.5f, 18f, 6.18f, 18f, 9.5f)
+                curveTo(18f, 14f, 20f, 16f, 20f, 16f)
+                horizontalLineTo(4f)
+                curveTo(4f, 16f, 6f, 14f, 6f, 9.5f)
+                close()
+                moveTo(10f, 19.5f)
+                curveTo(10.5f, 20.6f, 11.2f, 21f, 12f, 21f)
+                curveTo(12.8f, 21f, 13.5f, 20.6f, 14f, 19.5f)
+            }
+        }
+    }
+
+    val StarOutline: ImageVector by lazy {
+        icon("StarOutline") {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.1f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+                moveTo(12f, 3.4f); lineTo(14.7f, 9.0f); lineTo(20.8f, 9.9f); lineTo(16.4f, 14.2f)
+                lineTo(17.4f, 20.3f); lineTo(12f, 17.4f); lineTo(6.6f, 20.3f); lineTo(7.6f, 14.2f)
+                lineTo(3.2f, 9.9f); lineTo(9.3f, 9.0f); close()
+            }
+        }
+    }
+
+    val StarFilled: ImageVector by lazy {
+        icon("StarFilled") {
+            path(fill = SolidColor(Color.Black), stroke = SolidColor(Color.Black), strokeLineWidth = 1.8f, strokeLineJoin = StrokeJoin.Round) {
+                moveTo(12f, 3.4f); lineTo(14.7f, 9.0f); lineTo(20.8f, 9.9f); lineTo(16.4f, 14.2f)
+                lineTo(17.4f, 20.3f); lineTo(12f, 17.4f); lineTo(6.6f, 20.3f); lineTo(7.6f, 14.2f)
+                lineTo(3.2f, 9.9f); lineTo(9.3f, 9.0f); close()
+            }
+        }
+    }
+
+    val EditPencil: ImageVector by lazy {
+        icon("EditPencil") {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.3f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+                moveTo(4f, 20f); horizontalLineTo(8f); lineTo(18f, 10f); lineTo(14f, 6f); lineTo(4f, 16f); close()
+                moveTo(13.5f, 6.5f); lineTo(17.5f, 10.5f)
+            }
+        }
+    }
+
+    val Check: ImageVector by lazy {
+        icon("Check") {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.75f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+                moveTo(4.5f, 12.5f); lineTo(9.5f, 17.5f); lineTo(20f, 6.5f)
+            }
+        }
+    }
+
+    val Plus: ImageVector by lazy {
+        icon("Plus") {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.6f, strokeLineCap = StrokeCap.Round) {
+                moveTo(12f, 5f); verticalLineTo(19f); moveTo(5f, 12f); horizontalLineTo(19f)
+            }
+        }
+    }
+
+    val Minus: ImageVector by lazy {
+        icon("Minus") {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.6f, strokeLineCap = StrokeCap.Round) {
+                moveTo(5f, 12f); horizontalLineTo(19f)
+            }
+        }
+    }
+
+    val MoreHoriz: ImageVector by lazy {
+        icon("MoreHoriz") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(5f, 12f); curveTo(5f, 10.9f, 4.1f, 10f, 3f, 10f); curveTo(1.9f, 10f, 1f, 10.9f, 1f, 12f); curveTo(1f, 13.1f, 1.9f, 14f, 3f, 14f); curveTo(4.1f, 14f, 5f, 13.1f, 5f, 12f); close()
+                moveTo(14f, 12f); curveTo(14f, 10.9f, 13.1f, 10f, 12f, 10f); curveTo(10.9f, 10f, 10f, 10.9f, 10f, 12f); curveTo(10f, 13.1f, 10.9f, 14f, 12f, 14f); curveTo(13.1f, 14f, 14f, 13.1f, 14f, 12f); close()
+                moveTo(23f, 12f); curveTo(23f, 10.9f, 22.1f, 10f, 21f, 10f); curveTo(19.9f, 10f, 19f, 10.9f, 19f, 12f); curveTo(19f, 13.1f, 19.9f, 14f, 21f, 14f); curveTo(22.1f, 14f, 23f, 13.1f, 23f, 12f); close()
+            }
+        }
+    }
 }

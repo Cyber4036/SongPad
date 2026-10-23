@@ -79,6 +79,21 @@ class FakeTakeRepository(val store: InMemoryStore = InMemoryStore()) : TakeRepos
         return Result.success(Unit)
     }
 
+    override suspend fun duplicate(takeId: String): Result<Take> {
+        val src = store.takes.value[takeId]?.takeIf { !it.meta.deleted } ?: return domainFailure(DataError.NotFound("Take", takeId))
+        val now = store.clock.nowMillis()
+        val newId = store.ids.newId()
+        val copy = src.copy(
+            id = newId,
+            name = "${src.name} (copy)",
+            audio = src.audio?.copy(id = store.ids.newId(), takeId = newId),
+            midi = src.midi?.copy(id = store.ids.newId(), takeId = newId),
+            meta = SyncMeta.create(now),
+        )
+        store.takes.update { it + (copy.id to copy) }
+        return Result.success(copy)
+    }
+
     private fun mutate(takeId: String, f: (Take) -> Take): Result<Unit> {
         val t = store.takes.value[takeId] ?: return domainFailure(DataError.NotFound("Take", takeId))
         store.takes.update { it + (takeId to f(t).let { u -> if (u.meta.deleted) u else u.copy(meta = u.meta.touched(store.clock.nowMillis())) }) }

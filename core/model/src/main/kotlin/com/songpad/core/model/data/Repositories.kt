@@ -38,6 +38,7 @@ interface TakeRepository {
     suspend fun markOrphaned(takeId: String): Result<Unit>
     suspend fun recoverOrphan(orphan: OrphanedTake, name: String): Result<Take>
     suspend fun hardDeleteOrphan(takeId: String): Result<Unit>
+    suspend fun duplicate(takeId: String): Result<Take>
 }
 
 interface SongRepository {
@@ -86,6 +87,7 @@ interface LyricsRepository {
     suspend fun ensureDocument(songId: String): Result<LyricsDocument>
     suspend fun insertSection(songId: String, tag: SectionTag, customLabel: String?, atIndex: Int?): Result<Section>
     suspend fun updateSectionText(sectionId: String, bodyText: String): Result<Unit>
+    suspend fun updateSectionTag(sectionId: String, tag: SectionTag, customLabel: String? = null): Result<Unit>
     suspend fun moveSection(sectionId: String, toIndex: Int): Result<Unit>
     suspend fun deleteSection(sectionId: String): Result<Unit>
 }

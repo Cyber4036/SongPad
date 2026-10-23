@@ -186,6 +186,11 @@ class SongDetailViewModel @Inject constructor(
 
     fun renameTake(takeId: String, name: String) = viewModelScope.launch { renameTakeUseCase(takeId, name).report(); closeDialog() }
 
+    fun duplicateTake(takeId: String) = viewModelScope.launch {
+        takes.duplicate(takeId).report()
+        closeDialog()
+    }
+
     /** §9.2 two-phase deletion, step 1: release the player before the row is soft-deleted. */
     fun deleteTake(takeId: String) = viewModelScope.launch {
         if (playback.state.value.sourceOrNull?.takeId == takeId) playback.stop()
@@ -201,6 +206,11 @@ class SongDetailViewModel @Inject constructor(
         val at = (lyricsUi.value as? LyricsUi.Inserting)?.atIndex
         lyricsRepo.insertSection(id, tag, customLabel, at).report()
         lyricsUi.value = LyricsUi.Idle
+    }
+
+    fun retagSection(sectionId: String, tag: SectionTag, customLabel: String? = null) = viewModelScope.launch {
+        lyricsRepo.updateSectionTag(sectionId, tag, customLabel).report()
+        closeDialog()
     }
 
     private var autosave: Job? = null

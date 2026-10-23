@@ -11,6 +11,8 @@ data class Song(
     val status: SongStatus,
     val isFavorite: Boolean,
     val meta: SyncMeta,
+    val takeCount: Int = 0,
+    val sectionCount: Int = 0,
 ) {
     val createdAt: Long get() = meta.createdAt
     val updatedAt: Long get() = meta.updatedAt

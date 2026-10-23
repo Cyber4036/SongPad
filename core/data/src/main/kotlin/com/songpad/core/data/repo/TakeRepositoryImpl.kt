@@ -149,6 +149,48 @@ class TakeRepositoryImpl @Inject constructor(
         Unit
     }
 
+    override suspend fun duplicate(takeId: String): Result<Take> = runDomain({ DataError.Io(it.message ?: "duplicate failed") }) {
+        val src = takes.get(takeId) ?: throw com.songpad.core.model.error.DomainException(DataError.NotFound("Take", takeId))
+        val srcAudio = audio.forTake(takeId)
+        val srcMidi = midi.forTake(takeId)
+        val newTakeId = ids.newId()
+        val now = clock.nowMillis()
+        files.takeDir(newTakeId)
+
+        val newAudio = srcAudio?.let { a ->
+            val srcFile = files.file(a.relativePath)
+            val extFileName = srcFile.name
+            val dstRel = "${TakePaths.takeDir(newTakeId)}/$extFileName"
+            if (srcFile.exists()) srcFile.copyTo(files.file(dstRel), overwrite = true)
+            val dstPeaksRel = a.peaksPath?.let { p ->
+                val pf = files.file(p)
+                if (pf.exists()) {
+                    val np = TakePaths.peaks(newTakeId)
+                    pf.copyTo(files.file(np), overwrite = true)
+                    np
+                } else null
+            }
+            AudioAssetEntity(ids.newId(), newTakeId, dstRel, a.mimeType, a.sampleRate, a.bitDepth, a.byteSize, dstPeaksRel, newSync(now))
+        }
+        val newMidi = srcMidi?.let { m ->
+            val srcFile = files.file(m.relativePath)
+            val dstRel = TakePaths.midi(newTakeId)
+            if (srcFile.exists()) srcFile.copyTo(files.file(dstRel), overwrite = true)
+            MidiAssetEntity(ids.newId(), newTakeId, dstRel, m.ppq, m.byteSize, m.eventCount, newSync(now))
+        }
+        val copyTake = TakeEntity(
+            id = newTakeId, songId = src.songId, name = "${src.name} (copy)", type = src.type, status = src.status,
+            durationMs = src.durationMs, audioAssetId = newAudio?.id, midiAssetId = newMidi?.id, sync = newSync(now),
+        )
+        db.withTransactionCompat {
+            takes.insert(copyTake)
+            newAudio?.let { audio.upsert(it) }
+            newMidi?.let { midi.upsert(it) }
+            src.songId?.let { sId -> db.songDao().get(sId)?.let { db.songDao().update(it.copy(sync = it.sync.touched(now))) } }
+        }
+        copyTake.toDomain(newAudio, newMidi)
+    }
+
     private suspend fun mutate(takeId: String, f: (TakeEntity) -> TakeEntity): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
         val t = takes.get(takeId) ?: throw com.songpad.core.model.error.DomainException(DataError.NotFound("Take", takeId))
         takes.update(f(t).copy(sync = t.sync.touched(clock.nowMillis())))

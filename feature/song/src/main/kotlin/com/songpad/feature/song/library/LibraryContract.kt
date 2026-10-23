@@ -7,8 +7,7 @@ import com.songpad.core.model.take.Take
 import com.songpad.feature.song.detail.NowPlaying
 
 /**
- * §17 "Songs" states: EmptyLibrary · Populated · Filtered. (SearchResults is owned by :feature:search — the
- * library's search bar hands off to it; features never depend on each other, §5.)
+ * §17 "Songs" states: EmptyLibrary · Populated · Filtered.
  */
 sealed interface LibraryState {
     val filter: SongFilter
@@ -52,4 +51,8 @@ sealed interface LibrarySheet {
     data class AssignTake(val take: Take, val songs: List<Song>) : LibrarySheet
     data class NewSongForTake(val take: Take) : LibrarySheet
     data class ConfirmDeleteTake(val take: Take) : LibrarySheet
+    /** Song card `•••` options sheet (Capture.html §Songs). */
+    data class SongOptions(val song: Song) : LibrarySheet
+    data class RenameSong(val song: Song) : LibrarySheet
+    data class ConfirmDeleteSong(val song: Song) : LibrarySheet
 }

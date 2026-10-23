@@ -7,6 +7,7 @@ import com.songpad.core.data.testing.FakeLyricsRepository
 import com.songpad.core.data.testing.FakeMidiCaptureEngine
 import com.songpad.core.data.testing.FakeNoteRepository
 import com.songpad.core.data.testing.FakePlaybackController
+import com.songpad.core.data.testing.FakeSearchEngine
 import com.songpad.core.data.testing.FakeSettingsRepository
 import com.songpad.core.data.testing.FakeSongRepository
 import com.songpad.core.data.testing.FakeStorageProbe
@@ -72,13 +73,14 @@ class SongViewModelsTest {
     private val midi = FakeMidiCaptureEngine()
     private val transcodes = FakeTranscodeScheduler()
     private val storage = FakeStorageProbe()
+    private val search = FakeSearchEngine(store)
 
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
 
     private fun library() = LibraryViewModel(
         songs, takes, settings, CreateSongFromTakeUseCase(songs), AssignTakeToSongUseCase(takes, songs),
-        AudioRecoveryManager(takes), RecoverTakeUseCase(takes, transcodes, store.clock), playback, { FloatArray(0) }, Logger.Noop,
+        AudioRecoveryManager(takes), RecoverTakeUseCase(takes, transcodes, store.clock), playback, { FloatArray(0) }, Logger.Noop, search,
     )
     private fun detail() = SongDetailViewModel(
         songs, takes, lyrics, notes, playback, RenameTakeUseCase(takes),
@@ -144,7 +146,7 @@ class SongViewModelsTest {
         val recoveryManager = AudioRecoveryManager(takes)
         val vm = LibraryViewModel(
             songs, takes, settings, CreateSongFromTakeUseCase(songs), AssignTakeToSongUseCase(takes, songs),
-            recoveryManager, RecoverTakeUseCase(takes, transcodes, store.clock), playback, { FloatArray(0) }, Logger.Noop,
+            recoveryManager, RecoverTakeUseCase(takes, transcodes, store.clock), playback, { FloatArray(0) }, Logger.Noop, search,
         )
         subscribe(vm.state, vm.recoveryState)
         val real = OrphanedTake("orphan-1", TakePaths.pcm("orphan-1") + ".tmp", AudioFormat.BYTES_PER_MS * 5_000L, hasDbRow = false, hasEventsLog = true, songId = null)

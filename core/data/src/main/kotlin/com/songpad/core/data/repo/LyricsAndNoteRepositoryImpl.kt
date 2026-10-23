@@ -71,6 +71,19 @@ class LyricsRepositoryImpl @Inject constructor(
         dao.updateSection(s.copy(bodyText = bodyText, sync = s.sync.touched(clock.nowMillis())))
     }
 
+    override suspend fun updateSectionTag(sectionId: String, tag: SectionTag, customLabel: String?): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
+        val now = clock.nowMillis()
+        db.withTransactionCompat {
+            val s = dao.section(sectionId) ?: throw DomainException(DataError.NotFound("Section", sectionId))
+            val current = dao.sections(s.documentId).map {
+                if (it.id == sectionId) it.toDomain().copy(tag = tag, customLabel = if (tag == SectionTag.CUSTOM) customLabel else null, meta = it.sync.touched(now).toMeta())
+                else it.toDomain()
+            }
+            val renumbered = SectionOrdering.renumber(current)
+            dao.updateSections(renumbered.map { it.toEntity() })
+        }
+    }
+
     /** Sort-order-only write, deliberately not [reorder]'s general full-entity path: a move can land while a
      * different section's autosave debounce is still pending, and rewriting whole rows from a stale in-memory
      * snapshot would risk clobbering that section's just-typed bodyText with what was on disk when this read

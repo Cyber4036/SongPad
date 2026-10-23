@@ -16,8 +16,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -25,12 +27,11 @@ import androidx.compose.ui.unit.dp
 import com.songpad.core.ui.theme.Dimens
 import com.songpad.core.ui.theme.SongPadTheme
 import kotlinx.coroutines.flow.SharedFlow
+import kotlin.math.sin
 
 /**
- * Live waveform for the recording control group. Consumes the 10 Hz normalized `SharedFlow<Float>` from
- * `AudioRecorderEngine` (§15). Draws with `record` while [isRecording], `accent` otherwise — read from
- * the token layer, so there is no per-theme drawing code (§14). Keeps a fixed ring of bars; a slow UI
- * simply misses samples (DROP_OLDEST upstream), it never back-pressures audio.
+ * Live waveform for the recording screen and inline transport bar.
+ * Draws the mirrored organic wave silhouette from Capture.html (`wavePath`).
  */
 @Composable
 fun LiveWaveform(
@@ -40,31 +41,36 @@ fun LiveWaveform(
     barCount: Int = 64,
 ) {
     val c = SongPadTheme.colors
-    val ring = remember(barCount) { FloatArray(barCount) }
+    val ring = remember(barCount) {
+        FloatArray(barCount) { i ->
+            // Gentle idle wave silhouette matching seedWave in Capture.html before samples arrive
+            (0.08f + 0.14f * (0.55f + 0.45f * sin(i / 5f)))
+        }
+    }
     var head by remember { mutableIntStateOf(0) }
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(amplitudes) {
         amplitudes.collect { a ->
-            ring[head] = a.coerceIn(0f, 1f)
+            ring[head] = a.coerceIn(0.08f, 1f)
             head = (head + 1) % barCount
             tick++
         }
     }
-    val color = if (isRecording) c.record else c.accent
+    val color = if (isRecording) c.accent.copy(alpha = 0.65f) else c.accent.copy(alpha = 0.45f)
     Canvas(
         modifier
             .fillMaxWidth()
             .height(Dimens.waveformHeight)
             .semantics { contentDescription = if (isRecording) "Live waveform" else "Waveform" },
     ) {
-        @Suppress("UNUSED_EXPRESSION") tick // read so the canvas redraws on new samples
-        drawBars(barCount, color, c.divider) { i -> ring[(head + i) % barCount] }
+        @Suppress("UNUSED_EXPRESSION") tick
+        drawOrganicWave(barCount, color) { i -> ring[(head + i) % barCount] }
     }
 }
 
 /**
- * Static waveform over precomputed peaks with a progress cursor and seek gestures — the paused-review
- * scrubber (Phase 0 §6) and the ribbon player's seek control (Phase 0 §9). Progress is 0f..1f.
+ * Static waveform over precomputed peaks with progress clipping and seek gestures —
+ * used in both the Record screen's GlassPill transport and the floating RibbonPlayer.
  */
 @Composable
 fun SeekableWaveform(
@@ -74,9 +80,17 @@ fun SeekableWaveform(
     modifier: Modifier = Modifier,
     barCount: Int = 64,
     active: Boolean = true,
+    showPlayhead: Boolean = true,
 ) {
     val c = SongPadTheme.colors
-    val reduced = remember(peaks, barCount) { reducePeaks(peaks, barCount) }
+    val reduced = remember(peaks, barCount) {
+        val raw = reducePeaks(peaks, barCount)
+        if (raw.all { it == 0f }) {
+            FloatArray(barCount) { i -> (0.20f + 0.45f * (0.55f + 0.45f * sin(i / 4.5f))).coerceIn(0.12f, 0.9f) }
+        } else {
+            raw
+        }
+    }
     var dragging by remember { mutableStateOf<Float?>(null) }
     val shown = dragging ?: progress.coerceIn(0f, 1f)
     Canvas(
@@ -95,31 +109,45 @@ fun SeekableWaveform(
                 ) { change, _ -> dragging = (change.position.x / size.width).coerceIn(0f, 1f) }
             },
     ) {
+        val unplayed = c.text.copy(alpha = 0.22f)
         val played = if (active) c.accent else c.textTertiary
-        drawBars(barCount, c.divider.copy(alpha = 0.6f), c.divider) { i -> reduced[i] }
-        val cutoff = (barCount * shown).toInt()
-        drawBars(cutoff, played, Color.Transparent) { i -> reduced[i] }
-        val x = shown * size.width
-        drawLine(c.record, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+        drawOrganicWave(barCount, unplayed) { i -> reduced[i] }
+        val cutoffX = (size.width * shown).coerceIn(0f, size.width)
+        clipRect(left = 0f, top = 0f, right = cutoffX, bottom = size.height) {
+            drawOrganicWave(barCount, played) { i -> reduced[i] }
+        }
+        if (showPlayhead) {
+            drawLine(
+                color = c.accent700,
+                start = Offset(cutoffX, 3.dp.toPx()),
+                end = Offset(cutoffX, size.height - 3.dp.toPx()),
+                strokeWidth = 2.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+        }
     }
 }
 
-private fun DrawScope.drawBars(count: Int, color: Color, baseline: Color, amplitudeAt: (Int) -> Float) {
-    if (count <= 0) return
-    val totalBars = maxOf(count, 1)
-    val slot = size.width / 64f
-    val barWidth = (slot * 0.55f).coerceAtLeast(1.5f)
+private fun DrawScope.drawOrganicWave(count: Int, color: Color, amplitudeAt: (Int) -> Float) {
+    if (count <= 1 || size.width <= 0f || size.height <= 0f) return
     val midY = size.height / 2f
-    val minHalf = 1.5f
-    if (baseline != Color.Transparent) {
-        drawLine(baseline, Offset(0f, midY), Offset(size.width, midY), strokeWidth = 1f)
+    val maxHalf = (size.height / 2f - 2.dp.toPx()).coerceAtLeast(2f)
+    val stepX = size.width / (count - 1).coerceAtLeast(1)
+    val path = Path()
+    for (i in 0 until count) {
+        val x = i * stepX
+        val a = amplitudeAt(i).coerceIn(0.06f, 1f)
+        val y = midY - a * maxHalf
+        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
     }
-    for (i in 0 until totalBars) {
-        val a = amplitudeAt(i).coerceIn(0f, 1f)
-        val half = maxOf(minHalf, a * (size.height / 2f - 4f))
-        val x = i * slot + slot / 2f
-        drawLine(color, Offset(x, midY - half), Offset(x, midY + half), strokeWidth = barWidth, cap = StrokeCap.Round)
+    for (i in count - 1 downTo 0) {
+        val x = i * stepX
+        val a = amplitudeAt(i).coerceIn(0.06f, 1f)
+        val y = midY + a * maxHalf
+        path.lineTo(x, y)
     }
+    path.close()
+    drawPath(path, color = color)
 }
 
 /** Buckets an arbitrary-length peaks array (the `peaks.wave` file) into [barCount] max values. */

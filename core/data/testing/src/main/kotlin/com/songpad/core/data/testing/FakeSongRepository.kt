@@ -16,8 +16,13 @@ import kotlinx.coroutines.flow.update
 
 class FakeSongRepository(val store: InMemoryStore = InMemoryStore()) : SongRepository {
 
-    override fun observeSongs(filter: SongFilter): Flow<List<Song>> = store.songs.map { m ->
+    override fun observeSongs(filter: SongFilter): Flow<List<Song>> = combine(store.songs, store.takes, store.documents) { m, takes, docs ->
         m.values.filter { !it.meta.deleted && SongStatusTransitions.matches(it.status, it.isFavorite, filter) }
+            .map { s ->
+                val tCount = takes.values.count { it.songId == s.id && !it.meta.deleted }
+                val lCount = docs[s.id]?.sections?.size ?: 0
+                s.copy(takeCount = tCount, sectionCount = lCount)
+            }
             .sortedByDescending { it.meta.updatedAt }
     }
 

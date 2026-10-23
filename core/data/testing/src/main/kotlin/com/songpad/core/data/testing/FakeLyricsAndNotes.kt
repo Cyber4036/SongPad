@@ -37,6 +37,17 @@ class FakeLyricsRepository(val store: InMemoryStore = InMemoryStore()) : LyricsR
 
     override suspend fun updateSectionText(sectionId: String, bodyText: String): Result<Unit> = mutateSection(sectionId) { it.copy(bodyText = bodyText) }
 
+    override suspend fun updateSectionTag(sectionId: String, tag: SectionTag, customLabel: String?): Result<Unit> {
+        val (songId, doc) = find(sectionId) ?: return domainFailure(DataError.NotFound("Section", sectionId))
+        val now = store.clock.nowMillis()
+        val updated = doc.sections.map {
+            if (it.id == sectionId) it.copy(tag = tag, customLabel = if (tag == SectionTag.CUSTOM) customLabel else null, meta = it.meta.touched(now)) else it
+        }
+        val renumbered = SectionOrdering.renumber(updated)
+        store.documents.update { it + (songId to doc.copy(sections = renumbered, meta = doc.meta.touched(now))) }
+        return Result.success(Unit)
+    }
+
     override suspend fun moveSection(sectionId: String, toIndex: Int): Result<Unit> {
         val (songId, doc) = find(sectionId) ?: return domainFailure(DataError.NotFound("Section", sectionId))
         val moved = SectionOrdering.renumber(SectionOrdering.move(doc.sections, sectionId, toIndex))

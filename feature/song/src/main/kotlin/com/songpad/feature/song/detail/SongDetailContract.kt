@@ -1,6 +1,7 @@
 package com.songpad.feature.song.detail
 
 import com.songpad.core.model.lyrics.LyricsDocument
+import com.songpad.core.model.lyrics.Section
 import com.songpad.core.model.note.Note
 import com.songpad.core.model.song.Song
 import com.songpad.core.model.song.SongActivity
@@ -45,7 +46,7 @@ sealed interface LyricsState {
     data class SectionInserting(val document: LyricsDocument?, val atIndex: Int?) : LyricsState
 }
 
-/** §17 "Notes": Empty · Composing · MediaAttached · VoiceRecording · Saved · InvalidEmpty. Media/voice attach are V1 UI TODOs; the states exist. */
+/** §17 "Notes": Empty · Composing · MediaAttached · VoiceRecording · Saved · InvalidEmpty. */
 sealed interface NotesState {
     val notes: List<Note>
 
@@ -74,9 +75,11 @@ sealed interface SongDetailState {
 sealed interface SongDetailDialog {
     data object None : SongDetailDialog
     data object RenameSong : SongDetailDialog
+    data class TakeOptions(val take: Take) : SongDetailDialog
     data class RenameTake(val take: Take) : SongDetailDialog
     data class MoveTake(val take: Take, val songs: List<Song>) : SongDetailDialog
     data class ConfirmDeleteTake(val take: Take) : SongDetailDialog
+    data class RetagSection(val section: Section) : SongDetailDialog
     data class ConfirmDeleteSection(val sectionId: String, val label: String) : SongDetailDialog
     data class ConfirmDeleteNote(val noteId: String) : SongDetailDialog
     data object ConfirmDeleteSong : SongDetailDialog
