@@ -8,7 +8,13 @@ import kotlinx.serialization.Serializable
  * never domain objects — so a stale key degrades to a "not found" state, not a crash.
  */
 @Serializable data object LibraryKey : NavKey
-@Serializable data class RecordKey(val songId: String? = null) : NavKey
+@Serializable
+data class RecordKey(
+    val songId: String? = null,
+    val initialType: String = "VOICE",
+    val autoStart: Boolean = false,
+    val openLyrics: Boolean = false,
+) : NavKey
 @Serializable data class SongDetailKey(val songId: String, val tab: String = "HOME", val targetId: String? = null) : NavKey
 @Serializable data class SearchKey(val songId: String? = null) : NavKey
 @Serializable data object NudgesKey : NavKey

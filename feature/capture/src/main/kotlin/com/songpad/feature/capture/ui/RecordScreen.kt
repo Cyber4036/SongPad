@@ -104,6 +104,9 @@ fun RecordScreen(
     songId: String?,
     onNavigateToSong: (String) -> Unit,
     onClose: () -> Unit,
+    initialType: TakeType = TakeType.VOICE,
+    autoStart: Boolean = false,
+    openLyrics: Boolean = false,
     viewModel: CaptureViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -115,8 +118,8 @@ fun RecordScreen(
     val availableSongs by viewModel.availableSongs.collectAsStateWithLifecycle()
     val requester = rememberMicrophonePermissionRequester { viewModel.dispatch(CaptureIntent.PermissionResult(it)) }
 
-    LaunchedEffect(songId) {
-        viewModel.bind(songId)
+    LaunchedEffect(songId, initialType, autoStart) {
+        viewModel.bind(songId = songId, initialType = initialType, autoStart = autoStart)
         viewModel.dispatch(CaptureIntent.PermissionResult(MicrophonePermission.current(context)))
     }
     LaunchedEffect(Unit) {
@@ -153,6 +156,7 @@ fun RecordScreen(
         activeSongName = activeSongName,
         activeLyrics = activeLyrics,
         availableSongs = availableSongs,
+        openLyricsInitially = openLyrics,
         onSelectSongForLyrics = viewModel::selectSongForCapture,
         onCreateSongForLyrics = { name, after -> viewModel.createSongForCapture(name, after) },
         onEditLyricsSection = viewModel::editLyricsSection,
@@ -182,6 +186,7 @@ fun RecordContent(
     activeSongName: String? = null,
     activeLyrics: LyricsDocument? = null,
     availableSongs: List<Song> = emptyList(),
+    openLyricsInitially: Boolean = false,
     onSelectSongForLyrics: (String) -> Unit = {},
     onCreateSongForLyrics: (String, (String) -> Unit) -> Unit = { _, _ -> },
     onEditLyricsSection: (String, String) -> Unit = { _, _ -> },
@@ -194,11 +199,29 @@ fun RecordContent(
     var keySizeOrd by rememberSaveable { mutableIntStateOf(PianoKeySize.MEDIUM.ordinal) }
     val keySize = PianoKeySize.entries[keySizeOrd.coerceIn(0, PianoKeySize.entries.lastIndex)]
 
-    var lyricsLayer by rememberSaveable { mutableStateOf(false) }
+    var lyricsLayer by rememberSaveable { mutableStateOf(openLyricsInitially && boundSongId != null) }
+    var initialLyricsHandled by rememberSaveable { mutableStateOf(false) }
     var showPickSongSheet by remember { mutableStateOf(false) }
     var showNewSongDialog by remember { mutableStateOf(false) }
     var retaggingSection by remember { mutableStateOf<Section?>(null) }
     var showAddSectionSheet by remember { mutableStateOf(false) }
+
+    LaunchedEffect(openLyricsInitially, boundSongId) {
+        if (openLyricsInitially && !initialLyricsHandled) {
+            initialLyricsHandled = true
+            if (boundSongId != null) {
+                lyricsLayer = true
+            } else {
+                showPickSongSheet = true
+            }
+        }
+    }
+
+    LaunchedEffect(lyricsLayer, boundSongId, activeLyrics) {
+        if (lyricsLayer && boundSongId != null && activeLyrics != null && activeLyrics.sections.isEmpty()) {
+            onInsertLyricsSection(SectionTag.VERSE, null)
+        }
+    }
 
     val voiceActive = state.type == TakeType.VOICE || state.type == TakeType.VOICE_PIANO
     val pianoActive = state.type == TakeType.PIANO || state.type == TakeType.VOICE_PIANO

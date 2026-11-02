@@ -136,7 +136,7 @@ fun SongPadApp(viewModel: MainViewModel) {
                 SongPadBottomBar(
                     current = current,
                     onSongs = { switchTopLevel(LibraryKey) },
-                    onRecord = { push(RecordKey()) },
+                    onRecord = { push(RecordKey(songId = null, initialType = "VOICE", autoStart = true, openLyrics = false)) },
                     onNudges = { switchTopLevel(NudgesKey) },
                     unreadNudgeCount = unreadNudgeCount,
                 )
@@ -154,15 +154,22 @@ fun SongPadApp(viewModel: MainViewModel) {
                             onOpenSong = { push(SongDetailKey(it)) },
                             onOpenSearch = { push(SearchKey()) },
                             onOpenSettings = { push(SettingsKey) },
-                            onRecord = { push(RecordKey()) },
+                            onRecord = { push(RecordKey(songId = null, initialType = "VOICE", autoStart = true, openLyrics = false)) },
+                            onLaunchPiano = { push(RecordKey(songId = null, initialType = "PIANO", autoStart = false, openLyrics = false)) },
+                            onLaunchLyrics = { push(RecordKey(songId = null, initialType = "VOICE", autoStart = false, openLyrics = true)) },
                             onOpenLyrics = { songId, sectionId -> push(SongDetailKey(songId, SongDetailTab.LYRICS.name, sectionId)) },
                             onOpenNotes = { songId, noteId -> push(SongDetailKey(songId, SongDetailTab.NOTES.name, noteId)) },
                             onOpenTakes = { songId, takeId -> push(SongDetailKey(songId, SongDetailTab.TAKES.name, takeId)) },
                         )
                     }
                     entry<RecordKey> { key ->
+                        val initialTakeType = com.songpad.core.model.take.TakeType.entries.firstOrNull { it.name == key.initialType }
+                            ?: com.songpad.core.model.take.TakeType.VOICE
                         RecordScreen(
                             songId = key.songId,
+                            initialType = initialTakeType,
+                            autoStart = key.autoStart,
+                            openLyrics = key.openLyrics,
                             onNavigateToSong = { songId -> pop(); if (key.songId == null) push(SongDetailKey(songId)) },
                             onClose = { pop() },
                         )
@@ -173,7 +180,9 @@ fun SongPadApp(viewModel: MainViewModel) {
                             initialTab = SongDetailTab.entries.firstOrNull { it.name == key.tab } ?: SongDetailTab.HOME,
                             targetId = key.targetId,
                             onBack = { pop() },
-                            onRecord = { push(RecordKey(it)) },
+                            onRecord = { push(RecordKey(songId = it, initialType = "VOICE", autoStart = true, openLyrics = false)) },
+                            onLaunchPiano = { push(RecordKey(songId = it, initialType = "PIANO", autoStart = false, openLyrics = false)) },
+                            onLaunchLyrics = { push(RecordKey(songId = it, initialType = "VOICE", autoStart = false, openLyrics = true)) },
                             onExport = { push(ExportKey(it)) },
                             onSearchInSong = { push(SearchKey(it)) },
                         )
@@ -193,6 +202,8 @@ fun SongPadApp(viewModel: MainViewModel) {
                             onOpenSong = { push(SongDetailKey(it)) },
                             onOpenTake = { viewModel.openTake(it) },
                             onOpenLibrary = { switchTopLevel(LibraryKey) },
+                            onLaunchPiano = { push(RecordKey(songId = null, initialType = "PIANO", autoStart = false, openLyrics = false)) },
+                            onLaunchLyrics = { push(RecordKey(songId = null, initialType = "VOICE", autoStart = false, openLyrics = true)) },
                         )
                     }
                     entry<ExportKey> { key -> ExportScreen(songId = key.songId, onBack = { pop() }) }

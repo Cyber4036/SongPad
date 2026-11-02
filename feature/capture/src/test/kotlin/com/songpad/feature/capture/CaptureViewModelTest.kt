@@ -177,27 +177,39 @@ class CaptureViewModelTest {
     }
 
     @Test
-    fun `piano sampler arms only while a piano take is recording, and forwards key events`() = runVm {
+    fun `piano sampler arms when piano layer is selected in Ready and Recording, and records MIDI only while Recording`() = runVm {
         assertThat(piano.loadAsyncCallCount).isEqualTo(1)  // §8.1: loading starts at screen-open, not the toggle
 
         granted()
-        vm.dispatch(CaptureIntent.SelectType(TakeType.VOICE_PIANO)); dispatcher.scheduler.advanceUntilIdle()
-        vm.dispatch(CaptureIntent.Start); dispatcher.scheduler.advanceUntilIdle()
-        // The engine.state collector can bounce the derived state through Recording more than once
-        // during Start (e.g. an intermediate EngineChanged reduce); arm() is idempotent on the native
-        // side (PianoOutputStream::open()/start() no-op if already open/started), so >=1 is the real
-        // contract, not exactly 1.
+        vm.dispatch(CaptureIntent.SelectType(TakeType.PIANO)); dispatcher.scheduler.advanceUntilIdle()
         assertThat(piano.armCallCount).isAtLeast(1)
-        assertThat(piano.lastArmedMode).isEqualTo(TakeType.VOICE_PIANO)
+        assertThat(piano.lastArmedMode).isEqualTo(TakeType.PIANO)
 
-        vm.dispatch(CaptureIntent.KeyDown(note = 64, velocity = 90, eventTimeNanos = 1L)); dispatcher.scheduler.advanceUntilIdle()
-        vm.dispatch(CaptureIntent.KeyUp(note = 64, eventTimeNanos = 2L)); dispatcher.scheduler.advanceUntilIdle()
-        assertThat(piano.noteOnCalls).containsExactly(64 to 90)
-        assertThat(piano.noteOffCalls).containsExactly(64)
-        assertThat(midi.events).hasSize(2)  // both the sampler and the MIDI sidecar hear the same key event
+        // Playing keys in Ready state triggers audible sampler notes without recording MIDI events yet
+        vm.dispatch(CaptureIntent.KeyDown(note = 60, velocity = 80, eventTimeNanos = 1L)); dispatcher.scheduler.advanceUntilIdle()
+        vm.dispatch(CaptureIntent.KeyUp(note = 60, eventTimeNanos = 2L)); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(piano.noteOnCalls).containsExactly(60 to 80)
+        assertThat(piano.noteOffCalls).containsExactly(60)
+        assertThat(midi.events).isEmpty()
 
-        vm.dispatch(CaptureIntent.Pause); dispatcher.scheduler.advanceUntilIdle()
-        assertThat(piano.disarmCallCount).isAtLeast(1)  // same idempotent-call caveat as arm() above
+        // Starting recording records both audio and MIDI sidecar events
+        vm.dispatch(CaptureIntent.Start); dispatcher.scheduler.advanceUntilIdle()
+        vm.dispatch(CaptureIntent.KeyDown(note = 64, velocity = 90, eventTimeNanos = 3L)); dispatcher.scheduler.advanceUntilIdle()
+        vm.dispatch(CaptureIntent.KeyUp(note = 64, eventTimeNanos = 4L)); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(piano.noteOnCalls).containsExactly(60 to 80, 64 to 90)
+        assertThat(piano.noteOffCalls).containsExactly(60, 64)
+        assertThat(midi.events).hasSize(2)
+
+        vm.dispatch(CaptureIntent.SelectType(TakeType.VOICE)); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(piano.disarmCallCount).isAtLeast(1)
+    }
+
+    @Test
+    fun `autoStart begins recording automatically once permission is granted`() = runVm {
+        vm.bind(songId = null, initialType = TakeType.VOICE, autoStart = true)
+        granted()
+        assertThat(vm.state.value).isInstanceOf(CaptureState.Recording::class.java)
+        assertThat((vm.state.value as CaptureState.Recording).type).isEqualTo(TakeType.VOICE)
     }
 
     @Test

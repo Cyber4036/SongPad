@@ -56,6 +56,8 @@ fun NudgesScreen(
     onOpenSong: (String) -> Unit,
     onOpenTake: (String) -> Unit,
     onOpenLibrary: () -> Unit,
+    onLaunchPiano: () -> Unit = {},
+    onLaunchLyrics: () -> Unit = {},
     viewModel: NudgesViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -77,64 +79,75 @@ fun NudgesScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        EditorialHeader(
-            kicker = "Gentle reminders",
-            title = "Nudges",
-            kickerColor = c.accent2_800,
-        )
-        Text(
-            text = "Quiet prompts when an unfinished idea has been sitting a while. At most one a day — never pushy.",
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
-            color = c.textSecondary,
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
-        )
-
-        val enabled = state !is NudgesState.Disabled
-        SettingsGroupCard(modifier = Modifier.padding(bottom = 12.dp)) {
-            SettingRow(
-                title = "Gentle nudges",
-                subtitle = if (enabled) "On · at most one per day" else "Off · history stays below",
-                onClick = { viewModel.setEnabled(!enabled) },
-                trailing = { Switch(checked = enabled, onCheckedChange = { viewModel.setEnabled(it) }) },
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            EditorialHeader(
+                kicker = "Gentle reminders",
+                title = "Nudges",
+                kickerColor = c.accent2_800,
             )
-        }
-
-        when (val s = state) {
-            NudgesState.Loading -> Unit
-            NudgesState.Empty -> EmptyState(
-                icon = SongPadIcons.Bell,
-                title = "Nothing yet",
-                body = "When a section sits empty or a take has no home, a quiet reminder shows up here.",
+            Text(
+                text = "Quiet prompts when an unfinished idea has been sitting a while. At most one a day — never pushy.",
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
+                color = c.textSecondary,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
             )
-            is NudgesState.Active -> {
-                if (!s.notificationsGranted) {
-                    Text(
-                        text = "Notifications are off, so nudges only appear here. Turn them on in system settings to get them on the lock screen.",
-                        modifier = Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.xs),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textSecondary,
-                    )
-                }
-                History(s.history, viewModel::open)
-            }
-            is NudgesState.Disabled -> if (s.history.isEmpty()) {
-                EmptyState(SongPadIcons.Bell, "Nudges are off", "Turn them on to get an occasional reminder.")
-            } else {
-                History(s.history, viewModel::open)
-            }
-            is NudgesState.TargetUnavailable -> {
-                History(s.history, viewModel::open)
-                ConfirmDialog(
-                    title = "That one's gone",
-                    body = "The song or take this nudge pointed to was deleted.",
-                    confirmLabel = "Open library",
-                    destructive = false,
-                    onConfirm = { viewModel.dismissUnavailable(goToLibrary = true) },
-                    onDismiss = { viewModel.dismissUnavailable(goToLibrary = false) },
+
+            val enabled = state !is NudgesState.Disabled
+            SettingsGroupCard(modifier = Modifier.padding(bottom = 12.dp)) {
+                SettingRow(
+                    title = "Gentle nudges",
+                    subtitle = if (enabled) "On · at most one per day" else "Off · history stays below",
+                    onClick = { viewModel.setEnabled(!enabled) },
+                    trailing = { Switch(checked = enabled, onCheckedChange = { viewModel.setEnabled(it) }) },
                 )
             }
+
+            when (val s = state) {
+                NudgesState.Loading -> Unit
+                NudgesState.Empty -> EmptyState(
+                    icon = SongPadIcons.Bell,
+                    title = "Nothing yet",
+                    body = "When a section sits empty or a take has no home, a quiet reminder shows up here.",
+                )
+                is NudgesState.Active -> {
+                    if (!s.notificationsGranted) {
+                        Text(
+                            text = "Notifications are off, so nudges only appear here. Turn them on in system settings to get them on the lock screen.",
+                            modifier = Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.xs),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.textSecondary,
+                        )
+                    }
+                    History(s.history, viewModel::open)
+                }
+                is NudgesState.Disabled -> if (s.history.isEmpty()) {
+                    EmptyState(SongPadIcons.Bell, "Nudges are off", "Turn them on to get an occasional reminder.")
+                } else {
+                    History(s.history, viewModel::open)
+                }
+                is NudgesState.TargetUnavailable -> {
+                    History(s.history, viewModel::open)
+                    ConfirmDialog(
+                        title = "That one's gone",
+                        body = "The song or take this nudge pointed to was deleted.",
+                        confirmLabel = "Open library",
+                        destructive = false,
+                        onConfirm = { viewModel.dismissUnavailable(goToLibrary = true) },
+                        onDismiss = { viewModel.dismissUnavailable(goToLibrary = false) },
+                    )
+                }
+            }
         }
+
+        // Floating Lyrics (higher) and Piano (lower) quick-launch icons in the lower-right corner above the bottom bar
+        com.songpad.core.ui.components.CaptureQuickActions(
+            onLaunchLyrics = onLaunchLyrics,
+            onLaunchPiano = onLaunchPiano,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 18.dp, bottom = 16.dp),
+        )
     }
 }
 

@@ -72,6 +72,8 @@ class CaptureViewModel @Inject constructor(
 ) : ViewModel() {
 
     private var initialSongId: String? = null
+    private var autoStartPending: Boolean = false
+    private var boundInitialized: Boolean = false
     private val _boundSongId = MutableStateFlow<String?>(null)
     val boundSongId: StateFlow<String?> = _boundSongId.asStateFlow()
 
@@ -109,11 +111,14 @@ class CaptureViewModel @Inject constructor(
     init {
         // §8.1: sample loading begins when the screen opens, never gated behind the Piano toggle.
         piano.loadAsync()
-        // The Oboe output stream itself only needs to be armed while the mic is actually capturing
-        // (§8.1 / ADR-0035), so drive it off every path that enters/leaves Recording.
+        // Arm the Oboe output stream whenever Piano is active in Ready, Recording, or Paused state so the user
+        // can play and practice on the keyboard before starting recording as well as while recording.
         viewModelScope.launch {
-            state.map { (it as? CaptureState.Recording)?.type }.distinctUntilChanged().collect { type ->
-                if (type != null && type != TakeType.VOICE) {
+            state.map { st ->
+                val activePlayable = st is CaptureState.Ready || st is CaptureState.Recording || st is CaptureState.Paused
+                st.type.takeIf { activePlayable && it != TakeType.VOICE }
+            }.distinctUntilChanged().collect { type ->
+                if (type != null) {
                     piano.arm(type)
                 } else {
                     piano.disarm()
@@ -137,19 +142,41 @@ class CaptureViewModel @Inject constructor(
         }
     }
 
-    /** Called once by the screen with its route argument. */
-    fun bind(songId: String?) {
-        if (initialSongId == songId && _boundSongId.value == songId) return
-        initialSongId = songId
-        _boundSongId.value = songId
-        store.reduce { s -> if (s is CaptureState.Ready) s.copy(songId = songId) else s }
+    /** Called once by the screen with its route arguments. */
+    fun bind(songId: String?, initialType: TakeType = TakeType.VOICE, autoStart: Boolean = false) {
+        if (!boundInitialized) {
+            boundInitialized = true
+            initialSongId = songId
+            _boundSongId.value = songId
+            autoStartPending = autoStart
+            store.reduce { s ->
+                if (s is CaptureState.Ready) s.copy(songId = songId, type = initialType) else s
+            }
+            val currentState = store.current
+            if (autoStartPending && currentState is CaptureState.Ready && currentState.permission == PermissionState.Granted) {
+                autoStartPending = false
+                store.dispatch(CaptureIntent.Start)
+            }
+        } else if (initialSongId != songId || _boundSongId.value != songId) {
+            initialSongId = songId
+            _boundSongId.value = songId
+            store.reduce { s -> if (s is CaptureState.Ready) s.copy(songId = songId) else s }
+        }
     }
 
     /** Binds a song chosen from the "Which song?" picker when toggling the Lyrics layer on a loose idea. */
     fun selectSongForCapture(songId: String) {
         initialSongId = songId
         _boundSongId.value = songId
-        store.reduce { s -> if (s is CaptureState.Ready) s.copy(songId = songId) else s }
+        store.reduce { s ->
+            when (s) {
+                is CaptureState.Ready -> s.copy(songId = songId)
+                is CaptureState.Recording -> s.copy(session = s.session.copy(songId = songId))
+                is CaptureState.Paused -> s.copy(session = s.session.copy(songId = songId))
+                is CaptureState.Reviewing -> s.copy(session = s.session.copy(songId = songId))
+                else -> s
+            }
+        }
     }
 
     fun createSongForCapture(name: String, onCreated: (String) -> Unit = {}) {
@@ -203,7 +230,20 @@ class CaptureViewModel @Inject constructor(
 
     private suspend fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.handle(intent: CaptureIntent) {
         when (intent) {
-            is CaptureIntent.SelectType -> reduce { s -> if (s is CaptureState.Ready) s.copy(type = intent.type) else s }
+            is CaptureIntent.SelectType -> {
+                val prev = current
+                reduce { s ->
+                    when (s) {
+                        is CaptureState.Ready -> s.copy(type = intent.type)
+                        is CaptureState.Recording -> s.copy(session = s.session.copy(type = intent.type))
+                        is CaptureState.Paused -> s.copy(session = s.session.copy(type = intent.type))
+                        else -> s
+                    }
+                }
+                if (prev is CaptureState.Recording && prev.type == TakeType.VOICE && intent.type != TakeType.VOICE) {
+                    midiBinder.beginTake(prev.session.takeId)
+                }
+            }
             is CaptureIntent.PermissionResult -> onPermission(intent.state)
             CaptureIntent.Start -> start()
             CaptureIntent.Pause -> pause()
@@ -216,12 +256,16 @@ class CaptureViewModel @Inject constructor(
             CaptureIntent.ConfirmDiscard -> discard()
             CaptureIntent.CancelDiscard -> reduce { s -> s.withConfirmDiscard(false) }
             CaptureIntent.Reset -> reset()
-            is CaptureIntent.KeyDown -> if (current.isCapturingPiano()) {
-                midi.onKeyDown(intent.note, intent.velocity, intent.eventTimeNanos)
+            is CaptureIntent.KeyDown -> if (current.isPianoLayerActive()) {
+                if (current.isCapturingPiano()) {
+                    midi.onKeyDown(intent.note, intent.velocity, intent.eventTimeNanos)
+                }
                 piano.noteOn(intent.note, intent.velocity)
             }
-            is CaptureIntent.KeyUp -> if (current.isCapturingPiano()) {
-                midi.onKeyUp(intent.note, intent.eventTimeNanos)
+            is CaptureIntent.KeyUp -> if (current.isPianoLayerActive()) {
+                if (current.isCapturingPiano()) {
+                    midi.onKeyUp(intent.note, intent.eventTimeNanos)
+                }
                 piano.noteOff(intent.note)
             }
             is CaptureIntent.EngineChanged -> onEngine(intent.state)
@@ -231,7 +275,7 @@ class CaptureViewModel @Inject constructor(
 
     // ── transitions ──
 
-    private fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.onPermission(permission: PermissionState) {
+    private suspend fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.onPermission(permission: PermissionState) {
         reduce { st ->
             when (permission) {
                 PermissionState.Granted -> when (st) {
@@ -244,6 +288,20 @@ class CaptureViewModel @Inject constructor(
                 PermissionState.Unknown -> if (st is CaptureState.Ready) st.copy(permission = permission) else st
             }
         }
+        if (autoStartPending) {
+            when (permission) {
+                PermissionState.Granted -> {
+                    autoStartPending = false
+                    start()
+                }
+                PermissionState.Unknown -> {
+                    emit(CaptureEffect.RequestMicrophonePermission)
+                }
+                PermissionState.Denied, PermissionState.NeedsRationale, PermissionState.PermanentlyDenied -> {
+                    autoStartPending = false
+                }
+            }
+        }
     }
 
     private suspend fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.start() {
@@ -252,6 +310,7 @@ class CaptureViewModel @Inject constructor(
             emit(CaptureEffect.RequestMicrophonePermission)
             return
         }
+        autoStartPending = false
         peakBuffer.clear(); _reviewPeaks.value = FloatArray(0)
         val targetSongId = s.songId ?: _boundSongId.value
         startRecording(s.type, targetSongId)
@@ -452,6 +511,9 @@ class CaptureViewModel @Inject constructor(
     private fun CaptureState.isIdle(): Boolean = this is CaptureState.Ready || this is CaptureState.PermissionDenied || this is CaptureState.Discarded
 
     private fun CaptureState.qualityModeOrDefault(): QualityMode = (this as? CaptureState.Ready)?.qualityMode ?: QualityMode.STANDARD
+
+    private fun CaptureState.isPianoLayerActive(): Boolean =
+        (this is CaptureState.Ready || this is CaptureState.Recording || this is CaptureState.Paused) && type != TakeType.VOICE
 
     private fun CaptureState.isCapturingPiano(): Boolean = this is CaptureState.Recording && type != TakeType.VOICE
 

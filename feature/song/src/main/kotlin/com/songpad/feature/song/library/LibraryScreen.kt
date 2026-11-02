@@ -80,6 +80,8 @@ fun LibraryScreen(
     onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit,
     onRecord: () -> Unit,
+    onLaunchPiano: () -> Unit = {},
+    onLaunchLyrics: () -> Unit = {},
     onOpenLyrics: (songId: String, sectionId: String) -> Unit = { songId, _ -> onOpenSong(songId) },
     onOpenNotes: (songId: String, noteId: String) -> Unit = { songId, _ -> onOpenSong(songId) },
     onOpenTakes: (songId: String, takeId: String) -> Unit = { songId, _ -> onOpenSong(songId) },
@@ -174,6 +176,18 @@ fun LibraryScreen(
                 )
             }
         }
+
+        // Floating Lyrics (higher) and Piano (lower) quick-launch icons in the lower-right corner above the bottom bar
+        com.songpad.core.ui.components.CaptureQuickActions(
+            onLaunchLyrics = onLaunchLyrics,
+            onLaunchPiano = onLaunchPiano,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(
+                    end = 18.dp,
+                    bottom = if (state.nowPlaying != null) 76.dp else 16.dp,
+                ),
+        )
     }
 
     when (val sh = sheet) {

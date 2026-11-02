@@ -124,6 +124,8 @@ fun SongDetailScreen(
     onRecord: (String) -> Unit,
     onExport: (String) -> Unit,
     onSearchInSong: (String) -> Unit,
+    onLaunchPiano: (String) -> Unit = {},
+    onLaunchLyrics: (String) -> Unit = {},
     targetId: String? = null,
     viewModel: SongDetailViewModel = hiltViewModel(),
 ) {
@@ -309,18 +311,27 @@ fun SongDetailScreen(
                 }
             }
 
-            // Persistent Record FAB on Song Detail (hidden on Notes tab and when RibbonPlayer is open, matching Capture.html fabVisible)
+            // Persistent Record FAB + Quick-Launch Lyrics/Piano stack on Song Detail (hidden on Notes tab and when RibbonPlayer is open)
             val fabVisible = s.tab != SongDetailTab.NOTES && s.nowPlaying == null
             if (fabVisible) {
-                RecordButton(
-                    isRecording = false,
-                    onClick = { onRecord(s.song.id) },
-                    size = Dimens.recordFabDetail,
-                    haloWidth = 5.dp,
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(end = 22.dp, bottom = 22.dp),
-                )
+                        .padding(end = 18.dp, bottom = 18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    com.songpad.core.ui.components.CaptureQuickActions(
+                        onLaunchLyrics = { onLaunchLyrics(s.song.id) },
+                        onLaunchPiano = { onLaunchPiano(s.song.id) },
+                    )
+                    RecordButton(
+                        isRecording = false,
+                        onClick = { onRecord(s.song.id) },
+                        size = Dimens.recordFabDetail,
+                        haloWidth = 5.dp,
+                    )
+                }
             }
         }
     }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
@@ -34,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -206,6 +208,78 @@ fun RecordButton(
     }
 }
 
+/**
+ * Floating quick-launch circular action button for Piano and Lyrics capture shortcuts.
+ * Enforces the 48dp minimum touch target while rendering a 46dp elevated circular surface.
+ */
+@Composable
+fun QuickLaunchFab(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: Dp = 46.dp,
+    testTag: String? = null,
+) {
+    val c = SongPadTheme.colors
+    Box(
+        modifier = modifier.sizeIn(minWidth = Dimens.minTouchTarget, minHeight = Dimens.minTouchTarget),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            onClick = onClick,
+            shape = CircleShape,
+            color = c.surface,
+            contentColor = c.accent,
+            border = BorderStroke(1.dp, c.divider),
+            shadowElevation = 6.dp,
+            modifier = Modifier
+                .size(size)
+                .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
+                .semantics { this.contentDescription = contentDescription },
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = c.accent,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Vertical floating stack of Lyrics (top) and Piano (bottom) quick-launch icons positioned
+ * in the lower-right corner above the bottom bar or above the Song Detail Record button.
+ */
+@Composable
+fun CaptureQuickActions(
+    onLaunchLyrics: () -> Unit,
+    onLaunchPiano: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        QuickLaunchFab(
+            icon = SongPadIcons.Lyrics,
+            contentDescription = "Record with Lyrics",
+            onClick = onLaunchLyrics,
+            testTag = "quick_lyrics_button",
+        )
+        QuickLaunchFab(
+            icon = SongPadIcons.Piano,
+            contentDescription = "Record with Piano",
+            onClick = onLaunchPiano,
+            testTag = "quick_piano_button",
+        )
+    }
+}
+
 /** Library/Takes/Tabs filter pill matching Capture.html (.tag / pill buttons). */
 @Composable
 fun FilterPill(
@@ -331,3 +405,5 @@ fun TagChip(
 }
 
 enum class TagTone { Accent2, Accent, Record, Neutral, Outline, Warning }
+
+
