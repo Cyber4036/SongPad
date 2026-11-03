@@ -305,8 +305,19 @@ class CaptureViewModel @Inject constructor(
     }
 
     private suspend fun MviStore<CaptureState, CaptureIntent, CaptureEffect>.start() {
-        val s = current as? CaptureState.Ready ?: return
+        val currentSt = current
+        if (currentSt is CaptureState.PermissionDenied) {
+            autoStartPending = true
+            if (currentSt.permanent) {
+                emit(CaptureEffect.OpenAppSettings)
+            } else {
+                emit(CaptureEffect.RequestMicrophonePermission)
+            }
+            return
+        }
+        val s = currentSt as? CaptureState.Ready ?: return
         if (s.permission != PermissionState.Granted) {
+            autoStartPending = true
             emit(CaptureEffect.RequestMicrophonePermission)
             return
         }

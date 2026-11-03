@@ -205,11 +205,35 @@ class CaptureViewModelTest {
     }
 
     @Test
-    fun `autoStart begins recording automatically once permission is granted`() = runVm {
+    fun `autoStart requests permission when unknown and starts recording directly once approved`() = runVm {
         vm.bind(songId = null, initialType = TakeType.VOICE, autoStart = true)
+        vm.dispatch(CaptureIntent.PermissionResult(PermissionState.Unknown)); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(effects).containsExactly(CaptureEffect.RequestMicrophonePermission)
+        assertThat(vm.state.value).isInstanceOf(CaptureState.Ready::class.java)
+
+        // User approves the permission dialog -> recording starts directly without tapping Record again
         granted()
         assertThat(vm.state.value).isInstanceOf(CaptureState.Recording::class.java)
         assertThat((vm.state.value as CaptureState.Recording).type).isEqualTo(TakeType.VOICE)
+    }
+
+    @Test
+    fun `autoStart handles permission denial gracefully and retries cleanly when allowed later`() = runVm {
+        vm.bind(songId = null, initialType = TakeType.VOICE, autoStart = true)
+        vm.dispatch(CaptureIntent.PermissionResult(PermissionState.Unknown)); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(effects).containsExactly(CaptureEffect.RequestMicrophonePermission)
+
+        // User denies the permission dialog
+        vm.dispatch(CaptureIntent.PermissionResult(PermissionState.NeedsRationale)); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(vm.state.value).isEqualTo(CaptureState.PermissionDenied(TakeType.VOICE, null, permanent = false))
+        assertThat(engine.calls).isEmpty()
+
+        // User taps Allow microphone / Record from PermissionDenied and approves -> starts recording directly
+        effects.clear()
+        vm.dispatch(CaptureIntent.Start); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(effects).containsExactly(CaptureEffect.RequestMicrophonePermission)
+        granted()
+        assertThat(vm.state.value).isInstanceOf(CaptureState.Recording::class.java)
     }
 
     @Test

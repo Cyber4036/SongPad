@@ -32,11 +32,13 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -52,6 +54,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.songpad.core.model.audio.InterruptionReason
 import com.songpad.core.model.lyrics.LyricsDocument
@@ -89,7 +94,9 @@ import com.songpad.feature.capture.CaptureState
 import com.songpad.feature.capture.CaptureViewModel
 import com.songpad.feature.capture.permission.MicrophonePermission
 import com.songpad.feature.capture.permission.rememberMicrophonePermissionRequester
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.launch
 
 /**
  * Phase 0 §6 recording screen redesigned to match Capture.html:
@@ -116,22 +123,37 @@ fun RecordScreen(
     val activeSongName by viewModel.activeSongName.collectAsStateWithLifecycle()
     val activeLyrics by viewModel.activeLyrics.collectAsStateWithLifecycle()
     val availableSongs by viewModel.availableSongs.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
     val requester = rememberMicrophonePermissionRequester { viewModel.dispatch(CaptureIntent.PermissionResult(it)) }
+    val currentOnNavigateToSong by rememberUpdatedState(onNavigateToSong)
+    val currentOnClose by rememberUpdatedState(onClose)
 
     LaunchedEffect(songId, initialType, autoStart) {
+        launch(start = CoroutineStart.UNDISPATCHED) {
+            viewModel.effects.collect { effect ->
+                when (effect) {
+                    is CaptureEffect.NavigateToSong -> currentOnNavigateToSong(effect.songId)
+                    CaptureEffect.Finished -> currentOnClose()
+                    CaptureEffect.RequestMicrophonePermission -> requester.request()
+                    CaptureEffect.OpenAppSettings -> MicrophonePermission.openAppSettings(context)
+                    is CaptureEffect.Message -> android.widget.Toast.makeText(context, effect.text, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
         viewModel.bind(songId = songId, initialType = initialType, autoStart = autoStart)
         viewModel.dispatch(CaptureIntent.PermissionResult(MicrophonePermission.current(context)))
     }
-    LaunchedEffect(Unit) {
-        viewModel.effects.collect { effect ->
-            when (effect) {
-                is CaptureEffect.NavigateToSong -> onNavigateToSong(effect.songId)
-                CaptureEffect.Finished -> onClose()
-                CaptureEffect.RequestMicrophonePermission -> requester.request()
-                CaptureEffect.OpenAppSettings -> MicrophonePermission.openAppSettings(context)
-                is CaptureEffect.Message -> android.widget.Toast.makeText(context, effect.text, android.widget.Toast.LENGTH_SHORT).show()
+
+    DisposableEffect(lifecycleOwner, state) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && state is CaptureState.PermissionDenied) {
+                if (MicrophonePermission.current(context) == PermissionState.Granted) {
+                    viewModel.dispatch(CaptureIntent.PermissionResult(PermissionState.Granted))
+                }
             }
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val takeOpen = state.holdsOpenTake()
@@ -405,7 +427,7 @@ fun RecordContent(
                     title = "SongPad needs the microphone",
                     body = "Recording captures audio only while this screen is open. Nothing leaves your device.",
                     actionLabel = if (state.permanent) "Open settings" else "Allow microphone",
-                    onAction = if (state.permanent) onOpenSettings else onRequestPermission,
+                    onAction = { dispatch(CaptureIntent.Start) },
                 )
                 is CaptureState.LowStorage -> EmptyState(
                     icon = SongPadIcons.Mic,
@@ -872,11 +894,11 @@ private fun Transport(
         contentAlignment = Alignment.Center,
     ) {
         when (state) {
-            is CaptureState.Ready -> RecordButton(
+            is CaptureState.Ready, is CaptureState.PermissionDenied -> RecordButton(
                 isRecording = false,
                 onClick = { dispatch(CaptureIntent.Start) },
                 size = Dimens.recordFabLarge,
-                pulseWhenIdle = true,
+                pulseWhenIdle = state is CaptureState.Ready,
                 haloWidth = 6.dp,
             )
             is CaptureState.Recording -> GlassPill(Modifier.fillMaxWidth()) {
