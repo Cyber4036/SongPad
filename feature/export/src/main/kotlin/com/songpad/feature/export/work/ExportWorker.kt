@@ -51,41 +51,89 @@ class ExportWorker @AssistedInject constructor(
             songId = songId,
             mode = ExportMode.valueOf(inputData.getString(KEY_MODE) ?: ExportMode.EVERYTHING.name),
             audioFormat = ExportAudioFormat.valueOf(inputData.getString(KEY_FORMAT) ?: ExportAudioFormat.STORED.name),
+            takeId = inputData.getString(KEY_TAKE_ID)?.takeIf { it.isNotBlank() },
         )
-        encoders.availability(request.audioFormat)?.let { return fail(it) }
+        if (request.mode != ExportMode.LYRICS_ONLY) {
+            encoders.availability(request.audioFormat)?.let { return fail(it) }
+        }
         val detail = songs.observeSong(songId).first() ?: return fail(ExportError.Io("song not found"))
         val planner = ExportPlanner(resolver)
         val plan = planner.plan(detail, request)
-        if (plan.takes.isEmpty() && (!plan.includeText || (detail.lyrics?.sections.isNullOrEmpty() && detail.notes.isEmpty()))) return fail(ExportError.NothingToExport)
+        if (plan.takes.isEmpty() && (!plan.includeText || (detail.lyrics?.sections.isNullOrEmpty() && detail.notes.isEmpty()))) {
+            return fail(ExportError.NothingToExport)
+        }
 
         val now = clock.nowMillis()
         val staging = File(files.tmpDir(), "export-$id").also { it.mkdirs() }
-        val bundle = File(files.tmpDir(), SongBundleWriter.bundleFileName(detail.song.name, now))
+        val isDirectLyrics = request.mode == ExportMode.LYRICS_ONLY
+        val isDirectSingleAudio = !isDirectLyrics &&
+            (request.takeId != null || (request.mode == ExportMode.AUDIO_TAKES && plan.takes.size == 1 && plan.takes[0].midiEntryPath == null)) &&
+            plan.takes.size == 1
+
+        val (outputFileName, outputMime) = when {
+            isDirectLyrics -> SongBundleWriter.lyricsFileName(detail.song.name) to "text/plain"
+            isDirectSingleAudio -> {
+                val single = plan.takes[0]
+                val ext = ExportPlanner.extensionFor(request.audioFormat, single.source)
+                SongBundleWriter.singleTakeFileName(detail.song.name, single.take.name, ext) to ExportPlanner.mimeTypeForExtension(ext)
+            }
+            else -> SongBundleWriter.bundleFileName(detail.song.name, now) to "application/zip"
+        }
+
+        val outputFile = File(files.tmpDir(), outputFileName)
         val progress = MutableStateFlow(0f to "")
         return try {
             coroutineScope {
-                // The writer's callback runs on an IO thread; progress is published from a coroutine that can suspend.
                 val publisher = launch { progress.collect { (f, item) -> setProgress(workDataOf(KEY_PROGRESS to f, KEY_ITEM to item)) } }
                 withContext(Dispatchers.IO) {
-                    val entries = buildEntries(plan, planner, staging, now)
-                    bundle.outputStream().use { out ->
-                        SongBundleWriter().write(entries, out) { i, n, path, f ->
-                            if (isStopped) return@write false
-                            val overall = if (n == 0) 1f else (i + f.coerceIn(0f, 1f)) / n
-                            progress.value = overall to path.substringAfterLast('/')
-                            true
+                    when {
+                        isDirectLyrics -> {
+                            progress.value = 0.2f to outputFileName
+                            val textContent = planner.standaloneLyricsDocumentText(plan)
+                            outputFile.writeText(textContent, Charsets.UTF_8)
+                            progress.value = 1f to outputFileName
+                        }
+                        isDirectSingleAudio -> {
+                            val single = plan.takes[0]
+                            val encoder = encoders.forSource(request.audioFormat, single.source)
+                            progress.value = 0.05f to outputFileName
+                            outputFile.outputStream().buffered(SongBundleWriter.BUFFER).use { out ->
+                                encoder.encode(single.source, out) { f ->
+                                    if (isStopped) throw SongBundleWriter.AbortedException()
+                                    progress.value = f.coerceIn(0f, 1f) to outputFileName
+                                }
+                            }
+                            progress.value = 1f to outputFileName
+                        }
+                        else -> {
+                            val entries = buildEntries(plan, planner, staging, now)
+                            outputFile.outputStream().use { out ->
+                                SongBundleWriter().write(entries, out) { i, n, path, f ->
+                                    if (isStopped) return@write false
+                                    val overall = if (n == 0) 1f else (i + f.coerceIn(0f, 1f)) / n
+                                    progress.value = overall to path.substringAfterLast('/')
+                                    true
+                                }
+                            }
                         }
                     }
                 }
                 publisher.cancel()
             }
-            Result.success(workDataOf(KEY_PATH to bundle.absolutePath, KEY_BYTES to bundle.length(), KEY_NAME to bundle.name))
+            Result.success(
+                workDataOf(
+                    KEY_PATH to outputFile.absolutePath,
+                    KEY_BYTES to outputFile.length(),
+                    KEY_NAME to outputFile.name,
+                    KEY_MIME to outputMime,
+                ),
+            )
         } catch (e: SongBundleWriter.AbortedException) {
-            bundle.delete(); Result.failure(workDataOf(KEY_ERROR to ERROR_CANCELLED))
+            outputFile.delete(); Result.failure(workDataOf(KEY_ERROR to ERROR_CANCELLED))
         } catch (e: CancellationException) {
-            bundle.delete(); throw e
+            outputFile.delete(); throw e
         } catch (t: Throwable) {
-            logger.e(TAG, "export failed", t); bundle.delete(); fail(ExportError.Io(t.message ?: t::class.java.simpleName))
+            logger.e(TAG, "export failed", t); outputFile.delete(); fail(ExportError.Io(t.message ?: t::class.java.simpleName))
         } finally {
             staging.deleteRecursively()
         }
@@ -120,17 +168,24 @@ class ExportWorker @AssistedInject constructor(
         const val KEY_SONG_ID = "song_id"
         const val KEY_MODE = "mode"
         const val KEY_FORMAT = "format"
+        const val KEY_TAKE_ID = "take_id"
         const val KEY_PROGRESS = "progress"
         const val KEY_ITEM = "item"
         const val KEY_PATH = "path"
         const val KEY_BYTES = "bytes"
         const val KEY_NAME = "name"
+        const val KEY_MIME = "mime"
         const val KEY_ERROR = "error"
         const val KEY_ERROR_KIND = "error_kind"
         const val ERROR_CANCELLED = "cancelled"
         const val GENERATOR = "SongPad/1.0"
         private const val TAG = "ExportWorker"
 
-        fun input(request: ExportRequest): Data = workDataOf(KEY_SONG_ID to request.songId, KEY_MODE to request.mode.name, KEY_FORMAT to request.audioFormat.name)
+        fun input(request: ExportRequest): Data = workDataOf(
+            KEY_SONG_ID to request.songId,
+            KEY_MODE to request.mode.name,
+            KEY_FORMAT to request.audioFormat.name,
+            KEY_TAKE_ID to request.takeId,
+        )
     }
 }

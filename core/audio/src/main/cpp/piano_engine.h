@@ -68,13 +68,14 @@ public:
     static constexpr int32_t kVoiceCount = 32;      // §8.1 voice pool of 32
     static constexpr int32_t kSampleRate = 48000;
     static constexpr float kReleaseSeconds = 0.12f;  // fade-out after note-off; avoids a click
+    static constexpr uint32_t kMaxRegions = 64;      // pre-reserved so loadRegion never reallocates
 
     explicit PianoEngine(int32_t sampleRate = kSampleRate);
 
-    // Called during async load (before playback starts); not real-time safe, not called concurrently
-    // with render(). Takes ownership of pcm's contents by moving them in.
+    // Called during async load; pre-reserved storage + atomic regionCount_ ensures render() never
+    // observes a reallocating vector or a partially constructed region.
     void loadRegion(PianoRegion region);
-    bool hasRegions() const { return !regions_.empty(); }
+    bool hasRegions() const { return regionCount_.load(std::memory_order_acquire) > 0; }
 
     // Producer side (any thread): enqueue a note event for the next render() to pick up.
     void noteOn(int32_t note, int32_t velocity) { events_.push({NoteEventQueue::Event::Type::NoteOn, note, velocity}); }
@@ -105,7 +106,7 @@ private:
         int64_t startFrame = 0;   // engine frame counter at note-on, for oldest-voice stealing
     };
 
-    int32_t findRegionForNote(int32_t note) const;
+    int32_t findRegionForNote(int32_t note, uint32_t regionCount) const;
     Voice* allocateVoice();
     void handleEvent(const NoteEventQueue::Event& e);
     void startVoice(Voice* voice, int32_t note, int32_t velocity);
@@ -113,6 +114,8 @@ private:
 
     int32_t sampleRate_;
     std::vector<PianoRegion> regions_;
+    std::atomic<uint32_t> regionCount_{0};
+    std::mutex loadMutex_;
     std::array<Voice, kVoiceCount> voices_;
     NoteEventQueue events_;
     int64_t frameCounter_ = 0;

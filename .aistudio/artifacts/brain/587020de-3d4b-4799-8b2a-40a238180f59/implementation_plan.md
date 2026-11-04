@@ -1,119 +1,137 @@
-# Instant Voice Capture & Quick-Launch Piano/Lyrics Actions
+# SongPad Export Overhaul & Full Round-Trip Import
 
-Streamline SongPad's capture entry points so tapping the main **Record** button immediately begins a Voice recording, while persistent floating **Lyrics** and **Piano** quick-launch buttons in the lower-right corner open the capture screen in their respective modes (Ready state) for immediate practice, reading, or multi-layer recording.
-
----
+This update resolves the issue where every export creates an unreadable `.songpad` / `.bin` file, enables native LAME MP3 encoding so MP3 exports succeed reliably, and introduces a complete round-trip Import workflow for song bundles (`.zip` / `.songpad`), standalone audio recordings (`.m4a`, `.flac`, `.wav`, `.mp3`), and plain-text lyrics (`.txt`).
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following product and UX decisions incorporate your specifications and clarifications:
+> The following product and architecture choices reflect your confirmed preferences and resolve all three export/import failure modes.
 
-- **Main Record Action Starts Recording Immediately**: Tapping the main Record button (on the bottom bar of Songs/Nudges, on the Song Detail screen, or in empty-state Record actions) opens the Record screen with **Voice** selected and automatically starts recording (`autoStart = true`). If microphone permission is not yet granted, the system permission prompt is triggered first and recording starts immediately upon approval.
-- **Floating Piano & Lyrics Quick-Launch Stack (Lower-Right)**: Two floating circular action buttons—**Lyrics** (stacked higher) and **Piano** (stacked below it)—float in the lower-right corner above the bottom bar on top-level screens (**Songs** and **Nudges**) and above the main Record FAB on the **Song Detail** screen.
-- **Context Awareness Across Screens**: Just like the main Record button, the Piano and Lyrics quick-launch icons automatically inherit the current context:
-  - From **Songs** or **Nudges**: launches as an unfiled *Loose idea* (and if Lyrics is launched on a loose idea, prompts the *"Which song?"* picker or new song dialog so lyrics have a home).
-  - From **Song Detail**: automatically binds to that specific song (`songId`), loading its lyrics and saving takes directly into that song.
-- **Playable Piano in Ready State Before Recording**: Opening the Record screen via the **Piano** icon sets **Piano** as the only active layer (`TakeType.PIANO`) in the `Ready` state. The Oboe piano sampler is armed whenever the Piano layer is active on the capture screen (`Ready`, `Recording`, `Paused`), allowing the user to freely play/practice on the keyboard before pressing Record, and start recording at any time.
+- **Confirmed Decision 1 — Direct Files + Standard `.zip` Bundles**:
+  - **Lyrics Only** exports produce a direct human-readable `.txt` file (`<SongName>_Lyrics.txt`, `text/plain`) rather than a compressed archive.
+  - **Single-Take** exports (either when a song has 1 take in *Audio takes* mode without MIDI, or when choosing **"Export take"** from a specific take's `•••` menu) export the direct audio file (`<SongName> - <TakeName>.m4a` / `.flac` / `.wav` / `.mp3`) with its true audio MIME type (`audio/mp4`, `audio/flac`, `audio/wav`, `audio/mpeg`).
+  - **Multi-Item / Everything** exports produce a standard `.zip` archive (`Export_<SongName>_<yyyyMMdd-HHmm>.zip`, `application/zip`) so Android SAF, file managers, and desktop DAWs never rename or treat the output as an unknown `.bin` binary.
+- **Confirmed Decision 2 — Native LAME MP3 Encoding Fixed**:
+  - Vendor and compile LAME 3.100 into the native NDK library (`libsongpad_lame.so`) so `LameMp3Encoder` is always available at runtime (48 kHz mono, 192 kbps CBR).
+- **Confirmed Decision 3 — Universal Import Scope (`.zip`, `.songpad`, Audio, `.txt`)**:
+  - Users can import full song archives (both legacy `.songpad` files that may have been saved as `.bin` and new `.zip` bundles), standalone audio recordings (`.m4a`, `.flac`, `.wav`, `.mp3`, `.aac`, `.ogg`), and `.txt` lyrics documents.
+- **Confirmed Decision 4 — Import Entry Points Across the App**:
+  - Accessible from the **Library header** (import button next to Settings), **Settings → Storage & data** ("Import songs, takes or lyrics"), and **inside any Song Detail screen** (to import an audio take or lyrics `.txt` directly into that song, plus direct single-take export from any take's `•••` menu).
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: Eliminates the extra tap when catching fleeting vocal ideas while providing dedicated 1-tap entry points for Piano-only practice/capture and Lyrics-assisted songwriting.
-- **Target Audience / Persona**: Songwriters capturing sudden melodies (who need zero-latency 1-tap voice recording) as well as writers working out chord progressions on the built-in keyboard or singing over drafted lyrics.
-- **Key Value**: Fast, predictable, context-aware capture from anywhere in the core songwriting workflow without cluttering the interface.
+- **What It Does**:
+  1. **True-Format Export**: Delivers the exact file type the user expects—plain `.txt` for lyrics, direct `.mp3` / `.wav` / `.m4a` / `.flac` for single takes, and standard `.zip` archives for multi-track song bundles—with dynamic MIME registration so Android's "Save to files" and "Send to…" never append `.bin`.
+  2. **Working MP3 Export**: Bundles the LAME 3.100 C encoder into the native build so MP3 encoding works out-of-the-box for both single-take and full-bundle exports.
+  3. **Lossless Round-Trip Import**: Restores exported song bundles (including section body text, notes, audio takes, waveform peaks, and MIDI sidecars) and lets songwriters bring in external audio files or `.txt` lyric sheets into their library or directly into an open song.
+- **Target Audience / Persona**: Songwriters, vocalists, and musicians who rely on SongPad to safeguard their recorded ideas, move takes into DAWs or messaging apps, and restore backups without losing a single recording or lyric line.
+- **Key Value**: Eliminates data lock-in and export failures—every recording and lyric sheet can leave the app in a universally playable format and return intact whenever needed.
 
 ---
 
 ### 2. User Experience & Visual Design
 
 - **Key User Flows**:
-  1. **Instant Voice Capture (`Record` Button)**:
-     - User taps the main crimson Record button on Songs, Nudges, or Song Detail.
-     - App navigates to the Record screen with `Voice` toggled on and immediately transitions into `Recording` (with live waveform and running timer).
-  2. **Piano Quick-Launch (`Piano` Icon)**:
-     - User taps the floating Piano icon in the lower-right corner.
-     - App opens the Record screen in `Ready` state with **Piano** as the only active pill (`TakeType.PIANO`) and the docked multi-octave keyboard visible.
-     - User can immediately play notes on the keyboard (audible through the Oboe sampler) and tap the pulsing Record button whenever ready to record MIDI/audio, or toggle `Voice` / `Lyrics` on at any time.
-  3. **Lyrics Quick-Launch (`Lyrics` Icon)**:
-     - User taps the floating Lyrics icon in the lower-right corner.
-     - App opens the Record screen in `Ready` state with **Voice** + **Lyrics** toggled on.
-     - If launched from inside a **Song Detail** screen, that song's lyrics sections are immediately displayed on stage for reading/editing before or during recording.
-     - If launched from **Songs** or **Nudges** (loose idea), the *"Which song?"* bottom sheet appears so the user can pick an existing song or create a new one for their lyrics.
+  1. **Exporting from Song Detail (`Share / Export` button)**:
+     - The user chooses **Everything**, **Audio takes**, or **Lyrics only**, plus the audio format (**Stored M4A/FLAC**, **WAV**, or **MP3**).
+     - The summary card clearly states the output format and file extension before confirmation (e.g., `Export_Midnight_20261103.zip`, `Midnight_Lyrics.txt`, or `01 Verse idea.mp3`).
+     - Tapping **Save to files** or **Send to…** uses the exact MIME type (`text/plain`, `audio/mpeg`, `audio/wav`, `audio/mp4`, `audio/flac`, or `application/zip`) so the OS file picker and share sheet preserve the real extension.
+  2. **Exporting a Single Take (`•••` → `Export take`)**:
+     - Opens the Export screen pre-scoped to that specific take (with a chip showing the selected take name and an option to switch to all takes). Exporting produces the standalone `.mp3`, `.wav`, `.m4a`, or `.flac` audio file directly.
+  3. **Importing from Library or Settings**:
+     - Tapping the **Import** action in the Library top bar or in **Settings → Storage & data** opens the system document picker (`OpenDocument` accepting `*/*` so even previously exported `.songpad` or `.bin` files can be selected alongside `.zip`, `audio/*`, and `text/plain`).
+     - An **Import Bottom Sheet** displays instant progress and a completion summary (e.g., *"Imported 'Midnight' (3 takes, 4 lyric sections, 2 notes)"* with an **Open Song** button, or *"Imported audio take into Unfiled"* / *"Imported lyrics into Unfiled"*).
+  4. **Importing Inside an Open Song**:
+     - On the **Song Detail** screen, the top action row or tab actions let the user import an external audio file directly as a take in that song, or import a `.txt` file / bundle's lyrics directly into the song's Lyrics tab.
 
 - **Visual Identity & Theme**:
-  - **Aesthetic Direction**: Warm editorial studio aesthetic matching SongPad's existing OKLCH semantic token system (`SongPadTheme.colors`).
-  - **Floating Quick-Launch Stack**:
-    - Styled as elevated circular surfaces (`44.dp` visual circle with `48.dp` minimum interactive touch target) using `c.surface` background, `1.dp` `c.divider` border, subtle shadow elevation, and `c.text` / `c.accent` iconography (`SongPadIcons.Lyrics` on top, `SongPadIcons.Piano` below, spaced `10.dp` apart).
-    - On **Top-Level Screens (Songs, Nudges)**: Positioned in the lower-right corner (`padding(end = 18.dp, bottom = 16.dp)` above the bottom navigation bar, automatically shifting upward when the floating `RibbonPlayer` is visible).
-    - On **Song Detail Screen**: Positioned in a vertical column aligned to the lower-right corner (`Alignment.BottomEnd`), stacked directly above the `62.dp` crimson Record FAB so Lyrics, Piano, and Record form a cohesive vertical capture cluster.
+  - *Aesthetic Direction*: Editorial warm-paper notebook (`SongPad` theme) and cool-slate studio (`Melody Studio` theme), matching the existing tactile studio aesthetic.
+  - *Color Palette & Mood*: Uses `SongPadTheme.colors` semantic tokens (`c.bg`, `c.surface`, `c.accent`, `c.accent100`, `c.accent800`, `c.text`, `c.textSecondary`, `c.divider`, `c.success`) with zero hardcoded hex values in feature screens.
+  - *Typography & Hierarchy*: `Caprasimo` display headings (`SongPadFonts.heading`) paired with `Figtree` body and label typography, maintaining crisp pill badges (`TagChip`) and `SettingsGroupCard` containers.
+  - *Interactive Feedback & Motion*: Smooth progress indicators during bundle extraction/waveform peak generation, clear confirmation cards with file size and format badges, and non-destructive conflict resolution (automatically suffixing `(imported)` if a song with the same name already exists).
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Unified `RecordKey` Navigation Parameters**
-  - *Chosen Approach*: Extend `RecordKey` with `initialType: TakeType = TakeType.VOICE`, `autoStart: Boolean = false`, and `openLyrics: Boolean = false`.
-  - *Why*: Every capture entry point routes to the exact same `RecordScreen` composable while declaratively configuring its starting mode and auto-start behavior. Back-stack serialization in Navigation 3 remains clean and process-death safe.
-
-- **Decision 2: Live Piano Sampler in `Ready` State**
-  - *Chosen Approach*: Arm the Oboe `PianoSamplerEngine` whenever the Piano layer is active (`TakeType.PIANO` or `TakeType.VOICE_PIANO`) in `Ready`, `Recording`, or `Paused` states, and route `KeyDown`/`KeyUp` events to `piano.noteOn`/`noteOff` whenever Piano is active, while only writing MIDI events to `MidiCaptureEngine` when `CaptureState.Recording` is active.
-  - *Why*: Enables the user to warm up, test chords, and find their key on the piano before hitting Record, matching real-world instrument workflows.
-
-- **Decision 3: Independent Layer Toggles (Voice, Piano, Lyrics)**
-  - *Chosen Approach*: Allow toggling `Voice`, `Piano`, and `Lyrics` freely on the Record screen. Toggling `Lyrics` on at any time (Ready or Recording) reveals the live lyrics editor stage while keeping the transport and/or docked piano accessible below.
+- **Decision 1: Smart Output Container (Direct File vs. `.zip` Bundle)**
+  - *Chosen Approach*: Output a direct `.txt` file for *Lyrics only*, a direct `.mp3`/`.wav`/`.m4a`/`.flac` file when exporting a single take without extra bundle files, and a `.zip` archive when exporting multiple takes or *Everything* (audio + lyrics + notes + `song.json`).
+  - *Why*: Android's `CreateDocument` and share targets map unknown extensions like `.songpad` to `.bin` (`application/octet-stream`) or append `.zip`. Using real `.txt`, `.mp3`, `.wav`, `.m4a`, `.flac`, and `.zip` extensions with matching MIME types guarantees every exported file opens immediately in music players, text editors, and file managers.
+  - *Alternatives Considered*: Always wrapping single takes or lyrics in a `.zip`—rejected because users exporting a single MP3 or lyric sheet want to play or read it immediately without unzipping first.
+- **Decision 2: Enriching `song.json` Manifest While Supporting Legacy Exports**
+  - *Chosen Approach*: Include `bodyText` and `customLabel` inside `SongBundleManifest.SectionInfo` and `bodyText` inside `SongBundleManifest.NoteInfo` for lossless JSON restoration, while also adding a fallback parser for `lyrics.txt` and `notes.txt` when importing older `.songpad` / `.bin` archives that only stored section/note IDs in `song.json`.
+  - *Why*: Ensures users who already exported `.songpad` or `.bin` files before this update can recover 100% of their takes, lyrics, and notes.
+- **Decision 3: Waveform Peaks & Audio Metadata Extraction on Import**
+  - *Chosen Approach*: When importing audio files (from a bundle or standalone), extract duration and sample rate via Android `MediaMetadataRetriever` / `PcmDecoder` and compute a `.peaks` sidecar file (`PeakReducer`) so imported takes display full interactive waveforms in the `RibbonPlayer` just like native recordings.
+  - *Why*: Prevents blank waveforms or zero-duration takes after import.
 
 ---
 
 ### 4. Technical Architecture & Data Strategy *(Technical Reference)*
 
-#### Architecture & Component Diagram
+- **Architecture & Component Diagram**:
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                        App Shell & Navigation Host                         │
-│                                                                            │
-│  ┌──────────────────────────────┐        ┌──────────────────────────────┐  │
-│  │  Top-Level (Songs / Nudges)  │        │      Song Detail Screen      │  │
-│  │  • Centered Record Button    │        │  • Lower-Right Capture Stack │  │
-│  │  • Lower-Right Floating      │        │    [Lyrics] (Ready + Lyrics) │  │
-│  │    Stack: [Lyrics] / [Piano] │        │    [Piano]  (Ready + Piano)  │  │
-│  │    (songId = null)           │        │    [Record] (Auto Voice Rec) │  │
-│  └──────────────┬───────────────┘        └──────────────┬───────────────┘  │
-│                 │                                       │                  │
-│                 └───────────────────┬───────────────────┘                  │
-│                                     ▼                                      │
-│         RecordKey(songId, initialType, autoStart, openLyrics)              │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      │
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│                       RecordScreen & CaptureViewModel                      │
-│                                                                            │
-│  1. bind(songId, initialType, autoStart)                                   │
-│     ├─ Sets initial TakeType (VOICE / PIANO / VOICE_PIANO)                 │
-│     ├─ If openLyrics == true: opens Lyrics stage (or Song Picker if loose) │
-│     └─ If autoStart == true: dispatches Start once permission is resolved  │
-│                                                                            │
-│  2. Piano Sampler Lifecycle                                                │
-│     ├─ Armed whenever Piano layer is selected (Ready / Recording)          │
-│     ├─ KeyDown/KeyUp → PianoSamplerEngine (audible in Ready & Recording)   │
-│     └─ KeyDown/KeyUp → MidiCaptureEngine  (recorded only during Recording) │
-└────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                UI & Screens                                  │
+│                                                                              │
+│  ┌──────────────────────┐  ┌──────────────────────┐  ┌────────────────────┐  │
+│  │    LibraryScreen     │  │   SongDetailScreen   │  │   SettingsScreen   │  │
+│  │  • Header Import Btn │  │  • Export Song / Take│  │  • Storage & Data  │  │
+│  │  • Import Sheet      │  │  • Import Take/Lyrics│  │    Import Action   │  │
+│  └──────────┬───────────┘  └──────────┬───────────┘  └─────────┬──────────┘  │
+│             │                         │                        │             │
+│             ▼                         ▼                        ▼             │
+│  ┌────────────────────────────────────┐  ┌────────────────────────────────┐  │
+│  │            ExportScreen            │  │       ImportBottomSheet        │  │
+│  │  • Mode: Everything / Takes / Text │  │  • Auto-detects .zip/.songpad/ │  │
+│  │  • Scope: Full Song or Single Take │  │    .bin, audio/*, or .txt      │  │
+│  │  • Dynamic MIME SAF & Share Intent │  │  • Progress + Open Song CTA    │  │
+│  └─────────────────┬──────────────────┘  └────────────────┬───────────────┘  │
+└────────────────────┼──────────────────────────────────────┼──────────────────┘
+                     │                                      │
+                     ▼                                      ▼
+┌────────────────────────────────────────┐ ┌───────────────────────────────────┐
+│          Export Pipeline               │ │          Import Engine            │
+│                                        │ │                                   │
+│  ExportViewModel ──► ExportJobRunner   │ │  SongPadImporter (UseCase/Repo)   │
+│         │                              │ │    ├─ Zip/Bundle Inspector        │
+│         ▼                              │ │    │   (song.json + lyrics.txt)   │
+│    ExportWorker                        │ │    ├─ Standalone Audio Importer   │
+│    ├─ Direct .txt (Lyrics Only)        │ │    │   (M4A/FLAC/WAV/MP3 + Peaks) │
+│    ├─ Direct .mp3/.wav/.m4a/.flac      │ │    └─ Standalone .txt Parser      │
+│    │   (Single Take Export)            │ │        ([Section] tag detection)  │
+│    └─ Standard .zip (Multi-item Bundle)│ └────────────────┬──────────────────┘
+│         │                              │                  │
+│         ▼                              │                  ▼
+│  Native LAME JNI (libsongpad_lame.so)  │ ┌───────────────────────────────────┐
+│  • Vendored LAME 3.100 C sources       │ │   Room DB & TakeFileStore (IO)    │
+│  • 48 kHz mono, 192 kbps CBR MP3       │ │  • Song + Take + Audio/Midi Asset │
+└────────────────────────────────────────┘ │  • LyricsDocument + Sections      │
+                                           └───────────────────────────────────┘
 ```
 
-#### Interactive Component & State Mapping
+- **Data Model & State**:
+  - **`ExportRequest` & `ExportState.Success`**:
+    - Add optional `takeId: String? = null` to `ExportRequest` so exporting from a take's `•••` menu scopes the export to that single take (while allowing the user to toggle between "Selected take" and "All takes" on the Export screen).
+    - Add `mimeType: String` to `ExportState.Success` and `ExportJobStatus.Done` so `ExportScreen` launches `CreateDocument(mimeType)` and `Intent.ACTION_SEND` with the exact MIME type (`text/plain`, `audio/mpeg`, `audio/wav`, `audio/mp4`, `audio/flac`, or `application/zip`).
+  - **`SongBundleManifest` (`song.json`)**:
+    - Extend `SectionInfo` with `bodyText: String = ""` and `customLabel: String? = null`.
+    - Extend `NoteInfo` with `bodyText: String = ""`.
+    - Maintain backward compatibility (`ignoreUnknownKeys = true` and default values) so archives from earlier builds parse cleanly and fall back to `lyrics.txt` / `notes.txt` when `bodyText` in JSON is blank.
+  - **`ImportResult` & `SongPadImporter`**:
+    - `ImportResult.SongImported(songId, songName, takeCount, sectionCount, noteCount)`
+    - `ImportResult.TakeImported(takeId, takeName, songId)`
+    - `ImportResult.LyricsImported(documentId, songId, sectionCount)`
 
-- **Quick-Launch Floating Cluster (`CaptureQuickActions`)**:
-  - Reusable composable rendering the vertical `[Lyrics]` + `[Piano]` floating icon buttons with `Modifier.testTag("quick_lyrics_button")` and `Modifier.testTag("quick_piano_button")`.
-  - On Top-Level screens (`Songs`, `Nudges`): anchored at `Alignment.BottomEnd` above the `SongPadBottomBar` (and above `RibbonPlayer` when active).
-  - On `SongDetailScreen`: anchored at `Alignment.BottomEnd` directly above the main `RecordButton` (hidden on the `Notes` tab or when `RibbonPlayer` is active, matching existing visibility rules).
-- **Auto-Start Lifecycle Guard (`CaptureViewModel`)**:
-  - Tracks whether `autoStart` has already been consumed for the current `RecordKey` session so rotating the screen or pausing/discarding a take does not inadvertently re-trigger recording.
-  - When `autoStart = true`:
-    - If `MicrophonePermission` is already `Granted`, dispatches `CaptureIntent.Start` immediately upon binding.
-    - If `MicrophonePermission` is not yet granted, requests microphone permission first and automatically transitions into `CaptureIntent.Start` as soon as the user grants permission.
-- **Layer Toggle & Sampler State (`CaptureViewModel` & `RecordScreen`)**:
-  - `CaptureViewModel` arms `PianoSamplerEngine` whenever `state.type != TakeType.VOICE` and the screen is in `Ready`, `Recording`, or `Paused` state (with `CaptureMix` enabled during active recording).
-  - `KeyDown` and `KeyUp` intents trigger `piano.noteOn` / `piano.noteOff` whenever `state.type != TakeType.VOICE`, and additionally record into `midi.onKeyDown` / `midi.onKeyUp` when `state is CaptureState.Recording`.
+- **Interactive Component & State Mapping**:
+  - **Direct vs. Zip Export Resolution**:
+    - `ExportMode.LYRICS_ONLY` → writes `<SongName>_Lyrics.txt` (`text/plain`) directly to `files/tmp/` without wrapping in a zip.
+    - Single take export (either `request.takeId != null` or `ExportMode.AUDIO_TAKES` with 1 take and no MIDI) → encodes/copies directly to `<SongName> - <TakeName>.<ext>` (`audio/mpeg`, `audio/wav`, `audio/mp4`, or `audio/flac`).
+    - `ExportMode.EVERYTHING` or multi-take `ExportMode.AUDIO_TAKES` → writes `Export_<SongName>_<yyyyMMdd-HHmm>.zip` (`application/zip`).
+  - **Universal Import Auto-Detection**:
+    - Inspects the first 4 magic bytes of the selected `Uri` stream: if it starts with `PK\x03\x04` (ZIP header), it processes it as a SongPad bundle regardless of whether the filename ends in `.zip`, `.songpad`, or `.bin`.
+    - If the MIME type or extension is audio (`.m4a`, `.mp3`, `.wav`, `.flac`, `.aac`, `.ogg`) or `RIFF` / `fLaC` / `ID3` / `ftyp` magic bytes are detected, it copies the audio into a new `takes/<takeId>/` directory, decodes/extracts duration and waveform `.peaks`, and commits a `READY` take (either unassigned or attached to the target `songId`).
+    - Otherwise, if valid UTF-8 text is detected (`.txt`), it parses section headers like `[Verse 1]`, `[Chorus]`, `[Bridge]` (or imports as a Verse section) into either the target song's `LyricsDocument` or a new standalone `LyricsDocument`.

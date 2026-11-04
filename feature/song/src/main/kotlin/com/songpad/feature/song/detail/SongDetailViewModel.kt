@@ -11,6 +11,8 @@ import com.songpad.core.model.data.SongRepository
 import com.songpad.core.model.data.TakeRepository
 import com.songpad.core.model.error.DomainError
 import com.songpad.core.model.error.domainError
+import com.songpad.core.model.export.ImportResult
+import com.songpad.core.model.export.SongPadImporter
 import com.songpad.core.model.logging.Logger
 import com.songpad.core.model.lyrics.SectionTag
 import com.songpad.core.model.note.NoteDraft
@@ -47,6 +49,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.InputStream
 import javax.inject.Inject
 
 /**
@@ -68,6 +71,7 @@ class SongDetailViewModel @Inject constructor(
     private val peaksLoader: PeaksLoader,
     private val logger: Logger,
     private val assignTakeToSong: AssignTakeToSongUseCase = AssignTakeToSongUseCase(takes, songs),
+    private val importer: SongPadImporter? = null,
 ) : ViewModel() {
 
     private val songId = MutableStateFlow<String?>(null)
@@ -124,12 +128,18 @@ class SongDetailViewModel @Inject constructor(
     private data class Quad(val detail: SongDetail?, val tab: SongDetailTab, val filter: TakeFilter, val playback: PlaybackState)
 
     fun bind(id: String, initialTab: SongDetailTab = SongDetailTab.HOME) {
+        viewModelScope.launch { lyricsRepo.flushDrafts().report() }
         if (songId.value == id) return
         songId.value = id
         tab.value = initialTab
     }
 
-    fun selectTab(t: SongDetailTab) { tab.value = t }
+    fun selectTab(t: SongDetailTab) {
+        if (tab.value == SongDetailTab.LYRICS && t != SongDetailTab.LYRICS) {
+            flushPendingLyricsEdits()
+        }
+        tab.value = t
+    }
     fun setTakeFilter(f: TakeFilter) { takeFilter.value = f }
     fun showDialog(d: SongDetailDialog) { _dialog.value = d }
     fun closeDialog() { _dialog.value = SongDetailDialog.None }
@@ -146,6 +156,54 @@ class SongDetailViewModel @Inject constructor(
         viewModelScope.launch {
             assignTakeToSong(takeId, targetSongId).report().onSuccess { closeDialog() }
         }
+    }
+
+    fun openImportDialog() {
+        _dialog.value = SongDetailDialog.Import()
+    }
+
+    fun importIntoSong(displayName: String, mimeType: String?, openStream: () -> InputStream?) = viewModelScope.launch {
+        val imp = importer ?: return@launch
+        val currentSongId = songId.value ?: return@launch
+        _dialog.value = SongDetailDialog.Import(isBusy = true, statusTitle = "Importing…", statusBody = displayName)
+        val result = imp.importFromStream(displayName = displayName, mimeType = mimeType, targetSongId = currentSongId, openStream = openStream)
+        result.fold(
+            onSuccess = { imported ->
+                _dialog.value = when (imported) {
+                    is ImportResult.TakeImported -> {
+                        tab.value = SongDetailTab.TAKES
+                        SongDetailDialog.Import(
+                            isBusy = false,
+                            statusTitle = "Added take \"${imported.takeName}\"",
+                            statusBody = "Imported into Takes for this song.",
+                        )
+                    }
+                    is ImportResult.LyricsImported -> {
+                        tab.value = SongDetailTab.LYRICS
+                        SongDetailDialog.Import(
+                            isBusy = false,
+                            statusTitle = "Imported lyrics",
+                            statusBody = "Added ${imported.sectionCount} section${if (imported.sectionCount == 1) "" else "s"} to this song.",
+                        )
+                    }
+                    is ImportResult.SongBundleImported -> {
+                        SongDetailDialog.Import(
+                            isBusy = false,
+                            statusTitle = "Imported song \"${imported.songName}\"",
+                            statusBody = "Added to your Songs library (${imported.takeCount} takes, ${imported.sectionCount} lyric sections).",
+                        )
+                    }
+                }
+            },
+            onFailure = { err ->
+                _dialog.value = SongDetailDialog.Import(
+                    isBusy = false,
+                    statusTitle = "Import failed",
+                    statusBody = err.message ?: "Could not read \"$displayName\".",
+                    isError = true,
+                )
+            },
+        )
     }
 
     // ── Song ──
@@ -204,18 +262,24 @@ class SongDetailViewModel @Inject constructor(
     fun insertSection(tag: SectionTag, customLabel: String? = null) = viewModelScope.launch {
         val id = songId.value ?: return@launch
         val at = (lyricsUi.value as? LyricsUi.Inserting)?.atIndex
+        lyricsRepo.flushDrafts().report()
         lyricsRepo.insertSection(id, tag, customLabel, at).report()
         lyricsUi.value = LyricsUi.Idle
     }
 
     fun retagSection(sectionId: String, tag: SectionTag, customLabel: String? = null) = viewModelScope.launch {
+        lyricsRepo.flushDrafts().report()
         lyricsRepo.updateSectionTag(sectionId, tag, customLabel).report()
         closeDialog()
     }
 
     private var autosave: Job? = null
-    /** Autosave with a short debounce; the state shows Editing until the write lands, then Autosaved. */
+    /**
+     * Immediately persists [text] to the local draft state as it is typed (preventing data loss if the app
+     * process is interrupted), then commits to the database after a short debounce and transitions to [LyricsUi.Autosaved].
+     */
     fun editSection(sectionId: String, text: String) {
+        lyricsRepo.saveSectionDraft(sectionId, text)
         lyricsUi.value = LyricsUi.Dirty(sectionId)
         autosave?.cancel()
         autosave = viewModelScope.launch {
@@ -224,11 +288,26 @@ class SongDetailViewModel @Inject constructor(
         }
     }
     fun flushSectionEdit(sectionId: String, text: String) = viewModelScope.launch {
+        lyricsRepo.saveSectionDraft(sectionId, text)
         autosave?.cancel()
         lyricsRepo.updateSectionText(sectionId, text).report().onSuccess { lyricsUi.value = LyricsUi.Autosaved }
     }
-    fun moveSection(sectionId: String, toIndex: Int) = viewModelScope.launch { lyricsRepo.moveSection(sectionId, toIndex).report() }
-    fun deleteSection(sectionId: String) = viewModelScope.launch { lyricsRepo.deleteSection(sectionId).report(); closeDialog() }
+    fun flushPendingLyricsEdits() = viewModelScope.launch {
+        autosave?.cancel()
+        lyricsRepo.flushDrafts().report().onSuccess {
+            if (lyricsUi.value is LyricsUi.Dirty) {
+                lyricsUi.value = LyricsUi.Autosaved
+            }
+        }
+    }
+    fun moveSection(sectionId: String, toIndex: Int) = viewModelScope.launch {
+        lyricsRepo.flushDrafts().report()
+        lyricsRepo.moveSection(sectionId, toIndex).report()
+    }
+    fun deleteSection(sectionId: String) = viewModelScope.launch {
+        lyricsRepo.deleteSection(sectionId).report()
+        closeDialog()
+    }
 
     // ── Notes (Phase 0 §10) ──
     /** Begins composing (blank) or editing (existing text) a note. Resets any attached media/recording. */

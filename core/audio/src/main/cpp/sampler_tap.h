@@ -57,18 +57,24 @@ public:
         ring_.write(src, count);
     }
 
-    // Capture audio thread: saturating-adds `count` tapped samples onto `dst` once the tap is primed.
-    // When replaceMic is true (PIANO mode), mic input is muted so the take contains only clean digital piano.
-    void mixInto(int16_t* dst, uint32_t count) {
+    // Capture audio thread: copies from read-only `src` into `dst` (or zeroes `dst` in PIANO mode)
+    // and saturating-adds `count` tapped samples onto `dst` once the tap is primed.
+    // Never mutates `src`, because Oboe/AAudio input buffers may be read-only MMAP memory.
+    void copyAndMix(const int16_t* src, int16_t* dst, uint32_t count) {
         if (resetPending_.exchange(false, std::memory_order_acq_rel)) {
             ring_.clear();
             primed_ = false;
             maxConsumerBurst_ = 0;
         }
-        if (!enabled()) return;
-        if (replaceMic_.load(std::memory_order_acquire)) {
+        const bool isEnabled = enabled();
+        const bool muteMic = isEnabled && replaceMic_.load(std::memory_order_acquire);
+        if (muteMic || src == nullptr) {
             std::fill_n(dst, count, static_cast<int16_t>(0));
+        } else if (dst != src) {
+            std::memcpy(dst, src, count * sizeof(int16_t));
         }
+        if (!isEnabled) return;
+
         maxConsumerBurst_ = std::max(maxConsumerBurst_, count);
         const uint32_t burst = std::max(maxProducerBurst_.load(std::memory_order_relaxed), maxConsumerBurst_);
         const uint32_t target = std::clamp(2 * burst, kMinTargetSamples, kMaxTargetSamples);
@@ -97,6 +103,10 @@ public:
             done += got;
             if (got < want) break;
         }
+    }
+
+    void mixInto(int16_t* dst, uint32_t count) {
+        copyAndMix(dst, dst, count);
     }
 
 private:

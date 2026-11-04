@@ -53,14 +53,24 @@ class ExportViewModel @Inject constructor(
     private var job: Job? = null
     private var lastRequest: ExportRequest? = null
 
-    fun bind(songId: String) {
+    fun bind(songId: String, takeId: String? = null) {
         val current = (_state.value as? ExportState.Selecting)?.request
-        if (current?.songId == songId) return
-        refresh(ExportRequest(songId, ExportMode.EVERYTHING, ExportAudioFormat.STORED))
+        if (current?.songId == songId && current.takeId == takeId) return
+        val initialMode = if (takeId != null) ExportMode.AUDIO_TAKES else ExportMode.EVERYTHING
+        refresh(ExportRequest(songId, initialMode, ExportAudioFormat.STORED, takeId = takeId))
     }
 
-    fun setMode(mode: ExportMode) = (_state.value as? ExportState.Selecting)?.let { refresh(it.request.copy(mode = mode)) }
+    fun setMode(mode: ExportMode) = (_state.value as? ExportState.Selecting)?.let {
+        val updatedTakeId = if (mode == ExportMode.AUDIO_TAKES) it.request.takeId else null
+        refresh(it.request.copy(mode = mode, takeId = updatedTakeId))
+    }
+
     fun setFormat(format: ExportAudioFormat) = (_state.value as? ExportState.Selecting)?.let { refresh(it.request.copy(audioFormat = format)) }
+
+    fun clearTakeScope() = (_state.value as? ExportState.Selecting)?.let {
+        refresh(it.request.copy(takeId = null))
+    }
+
     fun markDisclosureSeen() = viewModelScope.launch { settings.markExportDisclosureSeen() }
 
     private fun refresh(request: ExportRequest) {
@@ -78,6 +88,7 @@ class ExportViewModel @Inject constructor(
         val summary = selecting.summary ?: return
         if (summary.takeCount == 0 && summary.sectionCount == 0 && summary.noteCount == 0) { _state.value = ExportState.Failure(ExportError.NothingToExport); return }
         lastRequest = selecting.request
+        savedFileConfirmation = null
         _state.value = ExportState.Preparing(0f, null)
         job?.cancel()
         job = viewModelScope.launch {
@@ -85,7 +96,7 @@ class ExportViewModel @Inject constructor(
                 _state.value = when (status) {
                     ExportJobStatus.Queued -> ExportState.Preparing(0f, null)
                     is ExportJobStatus.Running -> ExportState.Preparing(status.progress, status.item)
-                    is ExportJobStatus.Done -> ExportState.Success(status.name, status.bytes).also { bundlePath = status.path }
+                    is ExportJobStatus.Done -> ExportState.Success(status.name, status.bytes, status.mimeType).also { bundlePath = status.path }
                     is ExportJobStatus.Failed -> { logger.error(TAG, status.error); ExportState.Failure(status.error) }
                     ExportJobStatus.Cancelled -> ExportState.Cancelled
                 }
@@ -93,12 +104,15 @@ class ExportViewModel @Inject constructor(
         }
     }
 
-    /** Absolute path of the staged bundle after Success; delivery copies from here (§12.3). */
+    /** Absolute path of the staged bundle/file after Success; delivery copies from here (§12.3). */
     var bundlePath: String? by mutableStateOf(null)
         private set
 
     /** SAF destination chosen by the user; the screen copies the bundle there and clears it. */
     var pendingSave: android.net.Uri? by mutableStateOf(null)
+
+    /** Shown after "Save to files" completes writing to the user's chosen URI. */
+    var savedFileConfirmation: String? by mutableStateOf(null)
 
     fun cancel() {
         lastRequest?.let { runner.cancel(it) }

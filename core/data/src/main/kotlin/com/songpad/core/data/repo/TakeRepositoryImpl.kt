@@ -191,6 +191,15 @@ class TakeRepositoryImpl @Inject constructor(
         copyTake.toDomain(newAudio, newMidi)
     }
 
+    override suspend fun nextDefaultName(type: TakeType): String =
+        com.songpad.core.model.usecase.AutoIncrementNaming.nextName(
+            com.songpad.core.model.usecase.AutoIncrementNaming.takePrefix(type),
+            takes.allActiveNames(),
+        )
+
+    override suspend fun nextDefaultNameForPrefix(prefix: String): String =
+        com.songpad.core.model.usecase.AutoIncrementNaming.nextName(prefix, takes.allActiveNames())
+
     private suspend fun mutate(takeId: String, f: (TakeEntity) -> TakeEntity): Result<Unit> = runDomain({ DataError.Io(it.message ?: "") }) {
         val t = takes.get(takeId) ?: throw com.songpad.core.model.error.DomainException(DataError.NotFound("Take", takeId))
         takes.update(f(t).copy(sync = t.sync.touched(clock.nowMillis())))

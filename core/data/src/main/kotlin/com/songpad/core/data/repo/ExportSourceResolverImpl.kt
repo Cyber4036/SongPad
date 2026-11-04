@@ -15,7 +15,9 @@ class ExportSourceResolverImpl @Inject constructor(private val db: SongPadDataba
     override suspend fun resolve(takeId: String): Result<ExportSource> {
         val take = db.takeDao().get(takeId) ?: return domainFailure(DataError.NotFound("Take", takeId))
         val asset = db.audioAssetDao().forTake(takeId) ?: return domainFailure(DataError.NotFound("AudioAsset", takeId))
-        val lossless = asset.mimeType == AudioFormat.MIME_FLAC || asset.mimeType == AudioFormat.MIME_RAW_PCM
+        val lossless = asset.mimeType == AudioFormat.MIME_FLAC ||
+            asset.mimeType == AudioFormat.MIME_RAW_PCM ||
+            asset.mimeType == AudioFormat.MIME_WAV
         return Result.success(ExportSource(takeId, asset.relativePath, asset.mimeType, lossless, take.durationMs, asset.byteSize))
     }
 }

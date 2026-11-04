@@ -2,6 +2,8 @@ package com.songpad.core.data.testing
 
 import com.songpad.core.model.lyrics.LyricsDocument
 import com.songpad.core.model.lyrics.Section
+import com.songpad.core.model.lyrics.SectionDraft
+import com.songpad.core.model.lyrics.withDrafts
 import com.songpad.core.model.note.Note
 import com.songpad.core.model.nudge.Nudge
 import com.songpad.core.model.song.Song
@@ -12,9 +14,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 class InMemoryStore(val clock: FakeClock = FakeClock(), val ids: SequentialIdGenerator = SequentialIdGenerator()) {
     val songs = MutableStateFlow<Map<String, Song>>(emptyMap())
     val takes = MutableStateFlow<Map<String, Take>>(emptyMap())
-    val documents = MutableStateFlow<Map<String, LyricsDocument>>(emptyMap()) // keyed by songId
+    val documents = MutableStateFlow<Map<String, LyricsDocument>>(emptyMap()) // keyed by songId or docId
+    val sectionDrafts = MutableStateFlow<Map<String, SectionDraft>>(emptyMap()) // keyed by sectionId
     val notes = MutableStateFlow<Map<String, Note>>(emptyMap())
     val nudges = MutableStateFlow<Map<String, Nudge>>(emptyMap())
 
-    fun sectionsOf(songId: String): List<Section> = documents.value[songId]?.sections.orEmpty()
+    fun sectionsOf(songId: String): List<Section> =
+        documents.value[songId]?.withDrafts(sectionDrafts.value)?.sections.orEmpty()
 }

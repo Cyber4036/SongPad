@@ -14,14 +14,17 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,7 +32,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -37,6 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.AddPhotoAlternate
@@ -53,20 +56,28 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +88,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.songpad.core.model.lyrics.LyricsDocument
 import com.songpad.core.model.lyrics.Section
@@ -91,6 +105,7 @@ import com.songpad.core.ui.components.ConfirmDialog
 import com.songpad.core.ui.components.EmptyState
 import com.songpad.core.ui.components.FilterPill
 import com.songpad.core.ui.components.IconAction
+import com.songpad.core.ui.components.ImportBottomSheet
 import com.songpad.core.ui.components.RecordButton
 import com.songpad.core.ui.components.RibbonPlayer
 import com.songpad.core.ui.components.SecondaryButton
@@ -110,6 +125,7 @@ import com.songpad.core.ui.theme.Spacing
 import com.songpad.feature.song.library.icon
 import com.songpad.feature.song.library.label
 import com.songpad.feature.song.library.relativeTimeLabel
+import com.songpad.feature.song.library.resolveDisplayName
 import com.songpad.feature.song.library.shortBadge
 import com.songpad.feature.song.library.statusBadge
 import kotlinx.coroutines.Dispatchers
@@ -124,15 +140,40 @@ fun SongDetailScreen(
     onRecord: (String) -> Unit,
     onExport: (String) -> Unit,
     onSearchInSong: (String) -> Unit,
+    onExportTake: (songId: String, takeId: String) -> Unit = { sId, _ -> onExport(sId) },
     onLaunchPiano: (String) -> Unit = {},
     onLaunchLyrics: (String) -> Unit = {},
     targetId: String? = null,
     viewModel: SongDetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(songId) { viewModel.bind(songId, initialTab) }
+    val context = LocalContext.current
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val name = context.resolveDisplayName(uri) ?: "imported_file"
+            val mime = context.contentResolver.getType(uri)
+            viewModel.importIntoSong(name, mime) { context.contentResolver.openInputStream(uri) }
+        }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                viewModel.flushPendingLyricsEdits()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.flushPendingLyricsEdits()
+        }
+    }
     val recordingVoiceNote by viewModel.recordingVoiceNote.collectAsStateWithLifecycle()
     BackHandler(enabled = recordingVoiceNote) { viewModel.stopVoiceNote() }
-    val guardedBack = { if (recordingVoiceNote) viewModel.stopVoiceNote() else onBack() }
+    val guardedBack = {
+        viewModel.flushPendingLyricsEdits()
+        if (recordingVoiceNote) viewModel.stopVoiceNote() else onBack()
+    }
     LaunchedEffect(Unit) { viewModel.navigateToLibrary.collect { onBack() } }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dialog by viewModel.dialog.collectAsStateWithLifecycle()
@@ -146,124 +187,137 @@ fun SongDetailScreen(
             SongPadTopBar(title = null, onBack = onBack)
             EmptyState(SongPadIcons.MusicNote, "This song is gone", "It may have been deleted.", actionLabel = "Back to library", onAction = onBack)
         }
-        is SongDetailState.Loaded -> Box(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize()) {
-                // Header action row matching Capture.html: [< Back] ... [Finish/Reopen] [Archive/Unarchive] [Export]
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    IconAction(
-                        icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                        contentDescription = "Back",
-                        onClick = { guardedBack() },
-                        outlined = true,
-                    )
+        is SongDetailState.Loaded -> {
+            val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+            val compactHeaderForKeyboard = isImeVisible && (s.tab == SongDetailTab.LYRICS || s.tab == SongDetailTab.NOTES)
+            Box(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize()) {
+                    if (!compactHeaderForKeyboard) {
+                        // Header action row matching Capture.html: [< Back] ... [Finish/Reopen] [Archive/Unarchive] [Import] [Export]
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            IconAction(
+                                icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "Back",
+                                onClick = { guardedBack() },
+                                outlined = true,
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                val isFinished = s.song.status == SongStatus.FINISHED
+                                val isArchived = s.song.status == SongStatus.ARCHIVED
+                                StatusHeaderPill(
+                                    label = if (isFinished) "Reopen" else "Finish",
+                                    active = isFinished,
+                                    activeBg = c.accent,
+                                    activeFg = c.onAccent,
+                                    onClick = viewModel::toggleFinished,
+                                )
+                                StatusHeaderPill(
+                                    label = if (isArchived) "Unarchive" else "Archive",
+                                    active = isArchived,
+                                    activeBg = c.neutral800,
+                                    activeFg = c.bg,
+                                    onClick = viewModel::toggleArchived,
+                                )
+                                IconAction(
+                                    icon = SongPadIcons.Upload,
+                                    contentDescription = "Import into song",
+                                    onClick = { viewModel.openImportDialog() },
+                                    outlined = true,
+                                )
+                                IconAction(
+                                    icon = Icons.Filled.Share,
+                                    contentDescription = "Export",
+                                    onClick = { onExport(s.song.id) },
+                                    outlined = true,
+                                )
+                            }
+                        }
+
+                        // Song title + inline pencil edit button + favorite star
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = Spacing.screen, end = Spacing.screen, top = 4.dp, bottom = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = s.song.name,
+                                style = MaterialTheme.typography.headlineLarge.copy(
+                                    fontFamily = SongPadFonts.heading,
+                                    fontSize = 26.sp,
+                                    lineHeight = 29.sp,
+                                ),
+                                color = c.text,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .clickable { viewModel.showDialog(SongDetailDialog.RenameSong) },
+                            )
+                            Surface(
+                                onClick = { viewModel.showDialog(SongDetailDialog.RenameSong) },
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                                modifier = Modifier.size(30.dp),
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = SongPadIcons.EditPencil,
+                                        contentDescription = "Rename song",
+                                        tint = c.textSecondary,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Surface(
+                                onClick = viewModel::toggleFavorite,
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                                modifier = Modifier.size(34.dp),
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (s.song.isFavorite) SongPadIcons.StarFilled else SongPadIcons.StarOutline,
+                                        contentDescription = "Favorite",
+                                        tint = if (s.song.isFavorite) c.accent else c.textTertiary,
+                                        modifier = Modifier.size(19.dp),
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Spacer(Modifier.height(6.dp))
+                    }
+
+                    // Pill sub-tabs (Home, Lyrics, Takes, Notes) matching Capture.html
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(start = Spacing.screen, end = Spacing.screen, bottom = if (compactHeaderForKeyboard) 6.dp else 12.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        val isFinished = s.song.status == SongStatus.FINISHED
-                        val isArchived = s.song.status == SongStatus.ARCHIVED
-                        StatusHeaderPill(
-                            label = if (isFinished) "Reopen" else "Finish",
-                            active = isFinished,
-                            activeBg = c.accent,
-                            activeFg = c.onAccent,
-                            onClick = viewModel::toggleFinished,
-                        )
-                        StatusHeaderPill(
-                            label = if (isArchived) "Unarchive" else "Archive",
-                            active = isArchived,
-                            activeBg = c.neutral800,
-                            activeFg = c.bg,
-                            onClick = viewModel::toggleArchived,
-                        )
-                        IconAction(
-                            icon = Icons.Filled.Share,
-                            contentDescription = "Export",
-                            onClick = { onExport(s.song.id) },
-                            outlined = true,
-                        )
-                    }
-                }
-
-                // Song title + inline pencil edit button + favorite star
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = Spacing.screen, end = Spacing.screen, top = 4.dp, bottom = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = s.song.name,
-                        style = MaterialTheme.typography.headlineLarge.copy(
-                            fontFamily = SongPadFonts.heading,
-                            fontSize = 26.sp,
-                            lineHeight = 29.sp,
-                        ),
-                        color = c.text,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .weight(1f, fill = false)
-                            .clickable { viewModel.showDialog(SongDetailDialog.RenameSong) },
-                    )
-                    Surface(
-                        onClick = { viewModel.showDialog(SongDetailDialog.RenameSong) },
-                        shape = CircleShape,
-                        color = Color.Transparent,
-                        modifier = Modifier.size(30.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = SongPadIcons.EditPencil,
-                                contentDescription = "Rename song",
-                                tint = c.textSecondary,
-                                modifier = Modifier.size(16.dp),
+                        SongDetailTab.entries.forEach { t ->
+                            FilterPill(
+                                text = t.label,
+                                selected = s.tab == t,
+                                onClick = { viewModel.selectTab(t) },
                             )
                         }
                     }
-                    Spacer(Modifier.weight(1f))
-                    Surface(
-                        onClick = viewModel::toggleFavorite,
-                        shape = CircleShape,
-                        color = Color.Transparent,
-                        modifier = Modifier.size(34.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = if (s.song.isFavorite) SongPadIcons.StarFilled else SongPadIcons.StarOutline,
-                                contentDescription = "Favorite",
-                                tint = if (s.song.isFavorite) c.accent else c.textTertiary,
-                                modifier = Modifier.size(19.dp),
-                            )
-                        }
-                    }
-                }
 
-                // Pill sub-tabs (Home, Lyrics, Takes, Notes) matching Capture.html
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(start = Spacing.screen, end = Spacing.screen, bottom = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    SongDetailTab.entries.forEach { t ->
-                        FilterPill(
-                            text = t.label,
-                            selected = s.tab == t,
-                            onClick = { viewModel.selectTab(t) },
-                        )
-                    }
-                }
-
-                Box(Modifier.weight(1f)) {
+                    Box(Modifier.weight(1f)) {
                     when (s.tab) {
                         SongDetailTab.HOME -> HomeTab(
                             s = s,
@@ -311,26 +365,27 @@ fun SongDetailScreen(
                 }
             }
 
-            // Persistent Record FAB + Quick-Launch Lyrics/Piano stack on Song Detail (hidden on Notes tab and when RibbonPlayer is open)
-            val fabVisible = s.tab != SongDetailTab.NOTES && s.nowPlaying == null
-            if (fabVisible) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 18.dp, bottom = 18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    com.songpad.core.ui.components.CaptureQuickActions(
-                        onLaunchLyrics = { onLaunchLyrics(s.song.id) },
-                        onLaunchPiano = { onLaunchPiano(s.song.id) },
-                    )
-                    RecordButton(
-                        isRecording = false,
-                        onClick = { onRecord(s.song.id) },
-                        size = Dimens.recordFabDetail,
-                        haloWidth = 5.dp,
-                    )
+                // Persistent Record FAB + Quick-Launch Lyrics/Piano stack on Song Detail (hidden on Notes tab, when RibbonPlayer is open, or when keyboard is open)
+                val fabVisible = s.tab != SongDetailTab.NOTES && s.nowPlaying == null && !isImeVisible
+                if (fabVisible) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 18.dp, bottom = 18.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        com.songpad.core.ui.components.CaptureQuickActions(
+                            onLaunchLyrics = { onLaunchLyrics(s.song.id) },
+                            onLaunchPiano = { onLaunchPiano(s.song.id) },
+                        )
+                        RecordButton(
+                            isRecording = false,
+                            onClick = { onRecord(s.song.id) },
+                            size = Dimens.recordFabDetail,
+                            haloWidth = 5.dp,
+                        )
+                    }
                 }
             }
         }
@@ -362,7 +417,7 @@ fun SongDetailScreen(
                 )
                 SheetOptionRow(
                     label = "Export take",
-                    onClick = { viewModel.closeDialog(); onExport(s.song.id) },
+                    onClick = { viewModel.closeDialog(); onExportTake(s.song.id, d.take.id) },
                 )
                 SheetOptionRow(
                     label = "Move to another song…",
@@ -401,6 +456,19 @@ fun SongDetailScreen(
         is SongDetailDialog.ConfirmDeleteSection -> ConfirmDialog("Delete ${d.label}?", "Its lyrics are removed. This can't be undone.", "Delete", onConfirm = { viewModel.deleteSection(d.sectionId) }, onDismiss = viewModel::closeDialog)
         is SongDetailDialog.ConfirmDeleteNote -> ConfirmDialog("Delete note?", "This can't be undone.", "Delete", onConfirm = { viewModel.deleteNote(d.noteId) }, onDismiss = viewModel::closeDialog)
         SongDetailDialog.ConfirmDeleteSong -> ConfirmDialog("Delete this song?", "Takes, lyrics and notes go with it. Files are purged after 7 days.", "Delete song", onConfirm = viewModel::deleteSong, onDismiss = viewModel::closeDialog)
+        is SongDetailDialog.Import -> ImportBottomSheet(
+            title = "Import into song",
+            subtitle = "Add an audio recording (.mp3, .wav, .m4a, .flac) as a take, or append lyrics from a .txt file.",
+            allowBundle = false,
+            isBusy = d.isBusy,
+            statusTitle = d.statusTitle,
+            statusBody = d.statusBody,
+            isError = d.isError,
+            onPickBundleOrAny = { importPicker.launch(arrayOf("*/*")) },
+            onPickAudio = { importPicker.launch(arrayOf("audio/*", "application/ogg", "application/flac", "*/*")) },
+            onPickLyrics = { importPicker.launch(arrayOf("text/*", "*/*")) },
+            onDismiss = viewModel::closeDialog,
+        )
     }
 }
 
@@ -664,7 +732,27 @@ private fun LyricsState.documentOrNull(): LyricsDocument? = when (this) {
 private fun LyricsTab(state: LyricsState, vm: SongDetailViewModel, scrollTarget: String?, onScrolled: () -> Unit) {
     val c = SongPadTheme.colors
     val doc = state.documentOrNull()
-    val listState = rememberLazyListState()
+    val scrollState = rememberScrollState()
+    val focusManager = LocalFocusManager.current
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+
+    var focusedSectionId by remember { mutableStateOf<String?>(null) }
+    var lastReturnedSectionId by remember { mutableStateOf<String?>(null) }
+    var imeWasVisible by remember { mutableStateOf(false) }
+    var knownSectionIds by remember { mutableStateOf<Set<String>?>(null) }
+    var autoFocusSectionId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(isImeVisible) {
+        if (imeWasVisible && !isImeVisible) {
+            if (focusedSectionId != null) {
+                lastReturnedSectionId = focusedSectionId
+            }
+            focusedSectionId = null
+            focusManager.clearFocus()
+        }
+        imeWasVisible = isImeVisible
+    }
+
     Column(Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -674,16 +762,23 @@ private fun LyricsTab(state: LyricsState, vm: SongDetailViewModel, scrollTarget:
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                text = when (state) {
-                    is LyricsState.Editing -> if (state.dirtySectionId != null) "Saving…" else "All changes saved"
-                    is LyricsState.Autosaved -> "All changes saved"
+                text = when {
+                    state is LyricsState.Editing && state.dirtySectionId != null -> "Draft saved locally…"
+                    focusedSectionId != null -> "All changes saved · tap Done or hide keyboard to return to list"
                     else -> "All changes saved"
                 },
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                color = c.textTertiary,
+                color = if (focusedSectionId != null) c.accent else c.textTertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(end = 8.dp),
             )
             Surface(
-                onClick = { vm.beginInsertSection(null) },
+                onClick = {
+                    focusManager.clearFocus()
+                    focusedSectionId = null
+                    vm.beginInsertSection(null)
+                },
                 shape = RoundedCornerShape(Radii.pill),
                 color = c.accent100,
                 contentColor = c.accent800,
@@ -705,26 +800,89 @@ private fun LyricsTab(state: LyricsState, vm: SongDetailViewModel, scrollTarget:
             )
         } else {
             val sorted = doc.sections.sortedBy { it.sortOrder }
+
+            LaunchedEffect(sorted.map { it.id }) {
+                val currentIds = sorted.map { it.id }.toSet()
+                val prev = knownSectionIds
+                if (prev != null && currentIds.size > prev.size) {
+                    val addedId = sorted.lastOrNull { it.id !in prev }?.id
+                    if (addedId != null) {
+                        focusedSectionId = addedId
+                        autoFocusSectionId = addedId
+                    }
+                }
+                knownSectionIds = currentIds
+            }
+
             LaunchedEffect(scrollTarget, sorted) {
                 if (scrollTarget == null) return@LaunchedEffect
                 val index = sorted.indexOfFirst { it.id == scrollTarget }
-                if (index >= 0) { listState.animateScrollToItem(index); onScrolled() }
+                if (index >= 0) {
+                    onScrolled()
+                }
             }
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                state = listState,
-                contentPadding = PaddingValues(start = Spacing.screen, end = Spacing.screen, bottom = 96.dp),
+
+            // When a section is focused, levitate it to the top of the list and lock outer scroll at 0.
+            // When unfocused, return it to its canonical sortOrder slot (and scroll down if it's at the bottom).
+            LaunchedEffect(focusedSectionId) {
+                if (focusedSectionId != null) {
+                    scrollState.scrollTo(0)
+                } else {
+                    val returnedId = lastReturnedSectionId
+                    if (returnedId != null) {
+                        lastReturnedSectionId = null
+                        val canonicalIndex = sorted.indexOfFirst { it.id == returnedId }
+                        if (canonicalIndex >= sorted.lastIndex && sorted.size > 1) {
+                            scrollState.animateScrollTo(scrollState.maxValue)
+                        }
+                    }
+                }
+            }
+
+            val displaySections = remember(sorted, focusedSectionId) {
+                val active = sorted.firstOrNull { it.id == focusedSectionId }
+                if (active != null) {
+                    listOf(active) + sorted.filterNot { it.id == active.id }
+                } else {
+                    sorted
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState, enabled = focusedSectionId == null)
+                    .padding(
+                        start = Spacing.screen,
+                        end = Spacing.screen,
+                        bottom = if (focusedSectionId != null) 12.dp else 96.dp,
+                    ),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                itemsIndexed(sorted, key = { _, it -> it.id }) { index, section ->
-                    SectionEditorCard(
-                        section = section,
-                        vm = vm,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < sorted.lastIndex,
-                        onMoveUp = { vm.moveSection(section.id, index - 1) },
-                        onMoveDown = { vm.moveSection(section.id, index + 1) },
-                    )
+                displaySections.forEach { section ->
+                    key(section.id) {
+                        val canonicalIndex = sorted.indexOfFirst { it.id == section.id }.coerceAtLeast(0)
+                        val isLevitated = focusedSectionId == section.id
+                        val isDimmed = focusedSectionId != null && !isLevitated
+                        SectionEditorCard(
+                            section = section,
+                            vm = vm,
+                            isLevitated = isLevitated,
+                            dimmed = isDimmed,
+                            autoFocus = autoFocusSectionId == section.id,
+                            onAutoFocused = { if (autoFocusSectionId == section.id) autoFocusSectionId = null },
+                            onFocused = { focusedSectionId = section.id },
+                            onDoneEditing = {
+                                lastReturnedSectionId = section.id
+                                focusedSectionId = null
+                                focusManager.clearFocus()
+                            },
+                            canMoveUp = focusedSectionId == null && canonicalIndex > 0,
+                            canMoveDown = focusedSectionId == null && canonicalIndex < sorted.lastIndex,
+                            onMoveUp = { vm.moveSection(section.id, canonicalIndex - 1) },
+                            onMoveDown = { vm.moveSection(section.id, canonicalIndex + 1) },
+                        )
+                    }
                 }
             }
         }
@@ -781,18 +939,39 @@ internal fun SectionTagBottomSheet(
 private fun SectionEditorCard(
     section: Section,
     vm: SongDetailViewModel,
+    isLevitated: Boolean,
+    dimmed: Boolean,
+    autoFocus: Boolean,
+    onAutoFocused: () -> Unit,
+    onFocused: () -> Unit,
+    onDoneEditing: () -> Unit,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
 ) {
     val c = SongPadTheme.colors
-    var text by remember(section.id, section.bodyText) { mutableStateOf(section.bodyText) }
+    var text by remember(section.id) { mutableStateOf(section.bodyText) }
+    LaunchedEffect(section.bodyText) {
+        if (!isLevitated && text != section.bodyText) {
+            text = section.bodyText
+        }
+    }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(autoFocus) {
+        if (autoFocus) {
+            runCatching { focusRequester.requestFocus() }
+            onAutoFocused()
+        }
+    }
     Surface(
         shape = RoundedCornerShape(Radii.card),
         color = c.surface,
-        border = BorderStroke(1.dp, c.divider),
-        modifier = Modifier.fillMaxWidth(),
+        border = BorderStroke(if (isLevitated) 1.5.dp else 1.dp, if (isLevitated) c.accent else c.divider),
+        shadowElevation = if (isLevitated) 6.dp else 0.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (dimmed) 0.45f else 1f),
     ) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(
@@ -800,12 +979,48 @@ private fun SectionEditorCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                TagChip(
-                    text = section.displayLabel,
-                    tone = TagTone.Accent,
-                    onClick = { vm.showDialog(SongDetailDialog.RetagSection(section)) },
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TagChip(
+                        text = section.displayLabel,
+                        tone = TagTone.Accent,
+                        onClick = { vm.showDialog(SongDetailDialog.RetagSection(section)) },
+                    )
+                    if (isLevitated) {
+                        Text(
+                            text = "ACTIVE",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                letterSpacing = 0.8.sp,
+                            ),
+                            color = c.accent,
+                        )
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    if (isLevitated) {
+                        Surface(
+                            onClick = onDoneEditing,
+                            shape = RoundedCornerShape(Radii.pill),
+                            color = c.accent,
+                            contentColor = c.onAccent,
+                        ) {
+                            Text(
+                                text = "Done",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp,
+                                ),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
                     if (canMoveUp) {
                         Surface(
                             onClick = onMoveUp,
@@ -852,7 +1067,17 @@ private fun SectionEditorCard(
                 ),
                 cursorBrush = SolidColor(c.accent),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                minLines = if (isLevitated) 4 else 2,
+                maxLines = if (isLevitated) 7 else Int.MAX_VALUE,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { focusState ->
+                        if (focusState.isFocused) {
+                            onFocused()
+                        }
+                    },
                 decorationBox = { innerTextField ->
                     Box(Modifier.fillMaxWidth()) {
                         if (text.isEmpty()) {
@@ -910,6 +1135,13 @@ private fun NotesTab(
     val canAttach = editingNoteId == null
     val mentionMatch = remember(draft) { MentionTriggerRegex.find(draft) }
     val mentionQuery = mentionMatch?.groupValues?.getOrNull(1)?.trim().orEmpty()
+
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(isImeVisible, state.notes.size) {
+        if (state.notes.isNotEmpty() && isImeVisible && scrollTarget == null) {
+            listState.animateScrollToItem(state.notes.lastIndex)
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         // Chat-bubble message stream
@@ -1096,9 +1328,9 @@ private fun NotesTab(
                         }
                     }
 
-                    // Pill input field
+                    // Pill input field with multi-line internal scrolling so text is never buried
                     Surface(
-                        shape = RoundedCornerShape(Radii.pill),
+                        shape = RoundedCornerShape(22.dp),
                         color = c.surface,
                         border = BorderStroke(1.dp, if (state is NotesState.InvalidEmpty) c.destructive else c.divider),
                         modifier = Modifier.weight(1f),
@@ -1106,9 +1338,14 @@ private fun NotesTab(
                         BasicTextField(
                             value = draft,
                             onValueChange = { vm.updateDraftText(it) },
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = c.text, fontSize = 14.sp),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = c.text,
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                            ),
                             cursorBrush = SolidColor(c.accent),
                             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                            maxLines = 4,
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                             decorationBox = { innerTextField ->
                                 Box(contentAlignment = Alignment.CenterStart) {

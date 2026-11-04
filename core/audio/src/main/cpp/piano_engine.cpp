@@ -11,14 +11,23 @@ namespace {
 constexpr float kMasterGain = 0.28f;
 }  // namespace
 
-PianoEngine::PianoEngine(int32_t sampleRate) : sampleRate_(sampleRate) {}
+PianoEngine::PianoEngine(int32_t sampleRate) : sampleRate_(sampleRate > 0 ? sampleRate : kSampleRate) {
+    regions_.reserve(kMaxRegions);
+}
 
-void PianoEngine::loadRegion(PianoRegion region) { regions_.push_back(std::move(region)); }
+void PianoEngine::loadRegion(PianoRegion region) {
+    if (region.pcm.empty()) return;
+    std::lock_guard<std::mutex> lock(loadMutex_);
+    uint32_t current = regionCount_.load(std::memory_order_relaxed);
+    if (current >= kMaxRegions) return;
+    regions_.push_back(std::move(region));
+    regionCount_.store(current + 1, std::memory_order_release);
+}
 
-int32_t PianoEngine::findRegionForNote(int32_t note) const {
+int32_t PianoEngine::findRegionForNote(int32_t note, uint32_t regionCount) const {
     int32_t best = -1;
     int32_t bestDistance = INT32_MAX;
-    for (size_t i = 0; i < regions_.size(); ++i) {
+    for (uint32_t i = 0; i < regionCount; ++i) {
         const auto& r = regions_[i];
         if (note >= r.lokey && note <= r.hikey) return static_cast<int32_t>(i);
         int32_t distance = std::min(std::abs(note - r.lokey), std::abs(note - r.hikey));
@@ -50,9 +59,11 @@ PianoEngine::Voice* PianoEngine::allocateVoice() {
 }
 
 void PianoEngine::startVoice(Voice* voice, int32_t note, int32_t velocity) {
-    int32_t regionIndex = findRegionForNote(note);
+    const uint32_t count = regionCount_.load(std::memory_order_acquire);
+    int32_t regionIndex = findRegionForNote(note, count);
     if (regionIndex < 0) return;  // no regions loaded yet
     const auto& region = regions_[regionIndex];
+    if (region.pcm.empty()) return;
     voice->regionIndex = regionIndex;
     voice->note = note;
     voice->position = 0.0;
@@ -69,7 +80,7 @@ void PianoEngine::handleEvent(const NoteEventQueue::Event& e) {
     using Type = NoteEventQueue::Event::Type;
     switch (e.type) {
         case Type::NoteOn:
-            if (!regions_.empty()) startVoice(allocateVoice(), e.note, e.velocity);
+            if (regionCount_.load(std::memory_order_acquire) > 0) startVoice(allocateVoice(), e.note, e.velocity);
             break;
         case Type::NoteOff:
             for (auto& v : voices_) {
@@ -83,17 +94,24 @@ void PianoEngine::handleEvent(const NoteEventQueue::Event& e) {
 }
 
 void PianoEngine::render(int16_t* out, int32_t numFrames) {
+    if (out == nullptr || numFrames <= 0) return;
     NoteEventQueue::Event e{};
     while (events_.pop(&e)) handleEvent(e);
 
+    const uint32_t loadedCount = regionCount_.load(std::memory_order_acquire);
     for (int32_t i = 0; i < numFrames; ++i) {
         float sum = 0.0f;
         for (auto& v : voices_) {
             if (!v.active) continue;
+            if (v.regionIndex < 0 || static_cast<uint32_t>(v.regionIndex) >= loadedCount) {
+                v.active = false;
+                continue;
+            }
             const auto& region = regions_[v.regionIndex];
             const int64_t total = static_cast<int64_t>(region.pcm.size());
+            if (total <= 0) { v.active = false; continue; }
 
-            if (region.looped && v.position >= static_cast<double>(region.loopEndFrame)) {
+            if (region.looped && region.loopEndFrame <= total && v.position >= static_cast<double>(region.loopEndFrame)) {
                 double loopLength = static_cast<double>(region.loopEndFrame - region.loopStartFrame);
                 if (loopLength > 0.0) {
                     while (v.position >= static_cast<double>(region.loopEndFrame)) v.position -= loopLength;
@@ -101,11 +119,14 @@ void PianoEngine::render(int16_t* out, int32_t numFrames) {
             }
 
             int64_t idx0 = static_cast<int64_t>(v.position);
-            if (idx0 >= total) { v.active = false; continue; }
+            if (idx0 < 0 || idx0 >= total) { v.active = false; continue; }
             double frac = v.position - static_cast<double>(idx0);
             int64_t idx1 = idx0 + 1;
-            if (region.looped && idx1 >= region.loopEndFrame) idx1 = region.loopStartFrame;
-            else if (idx1 >= total) idx1 = idx0;
+            if (region.looped && region.loopEndFrame <= total && idx1 >= region.loopEndFrame) {
+                idx1 = std::clamp<int64_t>(region.loopStartFrame, 0, total - 1);
+            } else if (idx1 >= total) {
+                idx1 = idx0;
+            }
 
             float s0 = static_cast<float>(region.pcm[idx0]);
             float s1 = static_cast<float>(region.pcm[idx1]);

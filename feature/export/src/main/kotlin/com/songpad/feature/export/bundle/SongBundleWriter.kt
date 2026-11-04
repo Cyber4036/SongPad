@@ -103,12 +103,29 @@ class SongBundleWriter {
     companion object {
         const val BUFFER = 16 * 1024
 
-        /** `Export_<SongName>_<yyyyMMdd-HHmm>.songpad` (§12.1); the name is made filesystem-safe. */
+        /** `Export_<SongName>_<yyyyMMdd-HHmm>.zip` (§12.1); standard .zip extension so OS/file managers never rename to .bin. */
         fun bundleFileName(songName: String, atMillis: Long): String {
-            val safe = songName.trim().replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").replace(Regex("\\s+"), " ").take(60).ifBlank { "Song" }
+            val safe = sanitizeFileName(songName, fallback = "Song")
             val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date(atMillis))
-            return "Export_${safe}_$stamp.songpad"
+            return "Export_${safe}_$stamp.zip"
         }
+
+        /** Direct plain-text filename when exporting Lyrics Only. */
+        fun lyricsFileName(songName: String): String {
+            val safe = sanitizeFileName(songName, fallback = "Song")
+            return "${safe}_Lyrics.txt"
+        }
+
+        /** Direct audio filename when exporting a single take. */
+        fun singleTakeFileName(songName: String, takeName: String, extension: String): String {
+            val safeSong = sanitizeFileName(songName, fallback = "Song")
+            val safeTake = sanitizeFileName(takeName, fallback = "Take")
+            val ext = extension.trimStart('.').ifBlank { "wav" }
+            return "$safeSong - $safeTake.$ext"
+        }
+
+        private fun sanitizeFileName(name: String, fallback: String): String =
+            name.trim().replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").replace(Regex("\\s+"), " ").take(60).ifBlank { fallback }
 
         fun safeEntryName(name: String): String = name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim().take(80).ifBlank { "untitled" }
     }

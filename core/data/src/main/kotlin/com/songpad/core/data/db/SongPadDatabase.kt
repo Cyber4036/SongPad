@@ -46,7 +46,7 @@ abstract class SongPadDatabase : RoomDatabase() {
     abstract fun searchDao(): SearchDao
 
     companion object {
-        const val VERSION = 1
+        const val VERSION = 2
         const val NAME = "songpad.db"
 
         /** The FTS index and triggers live outside Room's entity model (§6.4), so they are created here and in migrations. */
@@ -66,6 +66,7 @@ abstract class SongPadDatabase : RoomDatabase() {
                 .setQueryCoroutineContext(Dispatchers.IO)
                 .addCallback(ftsCallback)
                 .addMigrations(*Migrations.ALL)
+                .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()
 
         /** In-memory database for instrumented tests and the migration harness — same driver, same callback. */

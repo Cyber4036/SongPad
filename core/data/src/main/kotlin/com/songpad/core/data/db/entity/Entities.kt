@@ -80,7 +80,9 @@ data class MidiAssetEntity(
 )
 data class LyricsDocumentEntity(
     @PrimaryKey val id: String,
-    @ColumnInfo(name = "song_id") val songId: String,
+    /** NULL is an independent standalone LyricsDocument, just like TakeEntity.songId. */
+    @ColumnInfo(name = "song_id") val songId: String?,
+    @ColumnInfo(name = "name", defaultValue = "''") val name: String = "",
     @Embedded val sync: SyncColumns,
 )
 

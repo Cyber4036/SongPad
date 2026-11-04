@@ -58,6 +58,17 @@ android {
     }
 }
 
+val vendorLameIfNeeded = tasks.register<Exec>("vendorLameIfNeeded") {
+    val lameCheck = file("src/main/cpp/lame/libmp3lame/lame.c")
+    onlyIf { !lameCheck.exists() }
+    workingDir(rootProject.projectDir)
+    commandLine("bash", "scripts/vendor_lame.sh")
+}
+
+tasks.named("preBuild") {
+    dependsOn(vendorLameIfNeeded)
+}
+
 dependencies {
     api(project(":core:model"))
 

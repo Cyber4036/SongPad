@@ -15,7 +15,7 @@ import javax.inject.Inject
 sealed interface ExportJobStatus {
     data object Queued : ExportJobStatus
     data class Running(val progress: Float, val item: String?) : ExportJobStatus
-    data class Done(val path: String, val name: String, val bytes: Long) : ExportJobStatus
+    data class Done(val path: String, val name: String, val bytes: Long, val mimeType: String = "application/zip") : ExportJobStatus
     data class Failed(val error: DomainError) : ExportJobStatus
     data object Cancelled : ExportJobStatus
 }
@@ -38,7 +38,10 @@ class WorkManagerExportRunner @Inject constructor(private val workManager: WorkM
         null, WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> ExportJobStatus.Queued
         WorkInfo.State.RUNNING -> ExportJobStatus.Running(progress.getFloat(ExportWorker.KEY_PROGRESS, 0f), progress.getString(ExportWorker.KEY_ITEM))
         WorkInfo.State.SUCCEEDED -> ExportJobStatus.Done(
-            outputData.getString(ExportWorker.KEY_PATH).orEmpty(), outputData.getString(ExportWorker.KEY_NAME).orEmpty(), outputData.getLong(ExportWorker.KEY_BYTES, 0),
+            outputData.getString(ExportWorker.KEY_PATH).orEmpty(),
+            outputData.getString(ExportWorker.KEY_NAME).orEmpty(),
+            outputData.getLong(ExportWorker.KEY_BYTES, 0),
+            outputData.getString(ExportWorker.KEY_MIME) ?: "application/zip",
         )
         WorkInfo.State.FAILED -> {
             val msg = outputData.getString(ExportWorker.KEY_ERROR)

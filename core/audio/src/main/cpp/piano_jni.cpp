@@ -22,19 +22,22 @@ JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeDestr
 }
 
 JNIEXPORT jint JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeOpen(JNIEnv*, jobject, jlong h) {
-    return reinterpret_cast<PianoOutputStream*>(h)->open();
+    auto* s = reinterpret_cast<PianoOutputStream*>(h);
+    return s ? s->open() : -1;
 }
 
 JNIEXPORT jint JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeStart(JNIEnv*, jobject, jlong h) {
-    return reinterpret_cast<PianoOutputStream*>(h)->start();
+    auto* s = reinterpret_cast<PianoOutputStream*>(h);
+    return s ? s->start() : -1;
 }
 
 JNIEXPORT jint JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeStop(JNIEnv*, jobject, jlong h) {
-    return reinterpret_cast<PianoOutputStream*>(h)->stop();
+    auto* s = reinterpret_cast<PianoOutputStream*>(h);
+    return s ? s->stop() : 0;
 }
 
 JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeClose(JNIEnv*, jobject, jlong h) {
-    reinterpret_cast<PianoOutputStream*>(h)->close();
+    if (auto* s = reinterpret_cast<PianoOutputStream*>(h)) s->close();
 }
 
 // Copies pcm into the engine's own storage (§8.1 "decoded once to PCM in memory at load") — the one
@@ -42,7 +45,10 @@ JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeClose
 JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeLoadRegion(
     JNIEnv* env, jobject, jlong h, jint lokey, jint hikey, jint rootNote, jboolean looped,
     jlong loopStartFrame, jlong loopEndFrame, jshortArray pcm) {
+    auto* s = reinterpret_cast<PianoOutputStream*>(h);
+    if (!s || !pcm) return;
     jsize length = env->GetArrayLength(pcm);
+    if (length <= 0) return;
     PianoRegion region;
     region.lokey = lokey;
     region.hikey = hikey;
@@ -52,19 +58,22 @@ JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeLoadR
     region.loopEndFrame = loopEndFrame;
     region.pcm.resize(static_cast<size_t>(length));
     env->GetShortArrayRegion(pcm, 0, length, reinterpret_cast<jshort*>(region.pcm.data()));
-    reinterpret_cast<PianoOutputStream*>(h)->engine().loadRegion(std::move(region));
+    s->engine().loadRegion(std::move(region));
 }
 
 JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeNoteOn(JNIEnv*, jobject, jlong h, jint note, jint velocity) {
-    reinterpret_cast<PianoOutputStream*>(h)->engine().noteOn(note, velocity);
+    if (auto* s = reinterpret_cast<PianoOutputStream*>(h)) {
+        s->ensureRunningIfArmed();
+        s->engine().noteOn(note, velocity);
+    }
 }
 
 JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeNoteOff(JNIEnv*, jobject, jlong h, jint note) {
-    reinterpret_cast<PianoOutputStream*>(h)->engine().noteOff(note);
+    if (auto* s = reinterpret_cast<PianoOutputStream*>(h)) s->engine().noteOff(note);
 }
 
 JNIEXPORT void JNICALL Java_com_songpad_core_audio_piano_NativePiano_nativeAllNotesOff(JNIEnv*, jobject, jlong h) {
-    reinterpret_cast<PianoOutputStream*>(h)->engine().allNotesOff();
+    if (auto* s = reinterpret_cast<PianoOutputStream*>(h)) s->engine().allNotesOff();
 }
 
 // ADR-0035 (amended): routes the sampler into the capture file. If replaceMic is true (PIANO mode), mic input is muted.

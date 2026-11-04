@@ -68,7 +68,7 @@ class CaptureViewModelTest {
     @After
     fun tearDown() { Dispatchers.resetMain() }
 
-    private fun runVm(block: suspend () -> Unit) = runTest(dispatcher) {
+    private fun runVm(block: suspend kotlinx.coroutines.test.TestScope.() -> Unit) = runTest(dispatcher) {
         val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.effects.collect { effects += it } }
         block()
         job.cancel()
@@ -286,13 +286,40 @@ class CaptureViewModelTest {
     }
 
     @Test
-    fun `saving a loose take emits Finished effect`() = runVm {
+    fun `saving a loose take emits Finished effect and auto-increments default take name`() = runVm {
         granted()
         vm.dispatch(CaptureIntent.Start); dispatcher.scheduler.advanceUntilIdle()
         engine.simulateFrames(48_000 * 2); dispatcher.scheduler.advanceUntilIdle()
-        vm.dispatch(CaptureIntent.Save(takeName = "Loose riff", newSongName = null)); dispatcher.scheduler.advanceUntilIdle()
+        vm.dispatch(CaptureIntent.Save(takeName = "", newSongName = null)); dispatcher.scheduler.advanceUntilIdle()
         val saved = vm.state.value as CaptureState.Saved
         assertThat(saved.take.songId).isNull()
+        assertThat(saved.take.name).isEqualTo("Voice take 1")
         assertThat(effects).contains(CaptureEffect.Finished)
+    }
+
+    @Test
+    fun `standalone lyrics can be created and edited without a song, and empty standalone lyrics are cleaned up on close`() = runVm {
+        val lyricsJob = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.activeLyrics.collect { } }
+        vm.ensureStandaloneLyricsForCapture(); dispatcher.scheduler.advanceUntilIdle()
+        val doc = vm.activeLyrics.value
+        assertThat(doc).isNotNull()
+        assertThat(doc!!.songId).isNull()
+        assertThat(doc.name).isEqualTo("Lyric 1")
+        assertThat(doc.sections).hasSize(1)
+
+        // Closing while still blank cleans up the empty standalone document
+        vm.finishStandaloneLyricsSession(); dispatcher.scheduler.advanceUntilIdle()
+        assertThat(lyrics.getDocumentById(doc.id)).isNull()
+
+        // Creating again and writing text keeps the standalone document as "Lyric 1"
+        vm.ensureStandaloneLyricsForCapture(); dispatcher.scheduler.advanceUntilIdle()
+        val doc2 = vm.activeLyrics.value!!
+        assertThat(doc2.name).isEqualTo("Lyric 1")
+        vm.editLyricsSection(doc2.sections.single().id, "City lights on wet pavement")
+        vm.finishStandaloneLyricsSession(); dispatcher.scheduler.advanceUntilIdle()
+        val persisted = lyrics.getDocumentById(doc2.id)
+        assertThat(persisted).isNotNull()
+        assertThat(persisted!!.sections.single().bodyText).isEqualTo("City lights on wet pavement")
+        lyricsJob.cancel()
     }
 }

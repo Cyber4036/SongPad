@@ -34,13 +34,19 @@ data class ExportRequest(
     val songId: String,
     val mode: ExportMode,
     val audioFormat: ExportAudioFormat,
+    /** Optional specific take ID when exporting a single take directly. */
+    val takeId: String? = null,
 )
 
 /** Phase 0 §20 "ExportJob — transient state object if needed". The §17 state set. */
 sealed interface ExportState {
     data class Selecting(val request: ExportRequest, val summary: ExportSummary?) : ExportState
     data class Preparing(val progress: Float, val currentItem: String?) : ExportState
-    data class Success(val bundleName: String, val byteSize: Long) : ExportState
+    data class Success(
+        val bundleName: String,
+        val byteSize: Long,
+        val mimeType: String = "application/zip",
+    ) : ExportState
     data class Failure(val error: com.songpad.core.model.error.DomainError) : ExportState
     data object Cancelled : ExportState
 }
@@ -54,6 +60,44 @@ data class ExportSummary(
     val noteCount: Int,
     val losslessTakeCount: Int,
     val estimatedBytes: Long,
+    val outputFileName: String = "",
+    val outputMimeType: String = "application/zip",
+    val selectedTakeName: String? = null,
 ) {
     val hasLossyTakes: Boolean get() = takeCount > losslessTakeCount
+}
+
+/** Result of importing a song bundle (.zip/.songpad/.bin), standalone audio take, or plain-text lyrics (.txt). */
+sealed interface ImportResult {
+    data class SongBundleImported(
+        val songId: String,
+        val songName: String,
+        val takeCount: Int,
+        val sectionCount: Int,
+        val noteCount: Int,
+    ) : ImportResult
+
+    data class TakeImported(
+        val takeId: String,
+        val takeName: String,
+        val songId: String?,
+        val durationMs: Long,
+    ) : ImportResult
+
+    data class LyricsImported(
+        val documentId: String,
+        val documentName: String,
+        val songId: String?,
+        val sectionCount: Int,
+    ) : ImportResult
+}
+
+/** Round-trip importer for song bundles (.zip / .songpad), audio files (.m4a, .flac, .wav, .mp3), and .txt lyrics. */
+interface SongPadImporter {
+    suspend fun importFromStream(
+        displayName: String,
+        mimeType: String?,
+        targetSongId: String? = null,
+        openStream: () -> java.io.InputStream?,
+    ): Result<ImportResult>
 }

@@ -27,7 +27,9 @@ import com.songpad.core.model.take.QualityMode
 import com.songpad.core.model.take.TakeDraft
 import com.songpad.core.model.take.TakePaths
 import com.songpad.core.model.take.TakeType
+import com.songpad.core.model.usecase.AssignLyricsToSongUseCase
 import com.songpad.core.model.usecase.AssignTakeToSongUseCase
+import com.songpad.core.model.usecase.CreateSongFromLyricsUseCase
 import com.songpad.core.model.usecase.CreateSongFromTakeUseCase
 import com.songpad.core.model.usecase.DiscardRecordingUseCase
 import com.songpad.core.model.usecase.FinalizeTakeUseCase
@@ -81,6 +83,7 @@ class SongViewModelsTest {
     private fun library() = LibraryViewModel(
         songs, takes, settings, CreateSongFromTakeUseCase(songs), AssignTakeToSongUseCase(takes, songs),
         AudioRecoveryManager(takes), RecoverTakeUseCase(takes, transcodes, store.clock), playback, { FloatArray(0) }, Logger.Noop, search,
+        lyrics, CreateSongFromLyricsUseCase(songs, lyrics), AssignLyricsToSongUseCase(lyrics, songs),
     )
     private fun detail() = SongDetailViewModel(
         songs, takes, lyrics, notes, playback, RenameTakeUseCase(takes),
@@ -147,6 +150,7 @@ class SongViewModelsTest {
         val vm = LibraryViewModel(
             songs, takes, settings, CreateSongFromTakeUseCase(songs), AssignTakeToSongUseCase(takes, songs),
             recoveryManager, RecoverTakeUseCase(takes, transcodes, store.clock), playback, { FloatArray(0) }, Logger.Noop, search,
+            lyrics, CreateSongFromLyricsUseCase(songs, lyrics), AssignLyricsToSongUseCase(lyrics, songs),
         )
         subscribe(vm.state, vm.recoveryState)
         val real = OrphanedTake("orphan-1", TakePaths.pcm("orphan-1") + ".tmp", AudioFormat.BYTES_PER_MS * 5_000L, hasDbRow = false, hasEventsLog = true, songId = null)
@@ -187,6 +191,30 @@ class SongViewModelsTest {
         vm.assignTake(b.id, created!!); advanceUntilIdle()
         assertThat(takes.getTake(b.id)!!.songId).isEqualTo(created)
         assertThat((vm.state.value as LibraryState.Populated).unassignedTakes).isEmpty()
+    }
+
+    @Test
+    fun `library - standalone lyrics populate library and can be assigned to a new or existing song`() = runTest(dispatcher) {
+        val vm = library()
+        subscribe(vm.state)
+        val doc1 = lyrics.createStandalone().getOrThrow()
+        lyrics.updateSectionText(doc1.sections.single().id, "Midnight train hook").getOrThrow()
+        val doc2 = lyrics.createStandalone().getOrThrow()
+        lyrics.updateSectionText(doc2.sections.single().id, "Second verse line").getOrThrow()
+        advanceUntilIdle()
+
+        val populated = vm.state.value as LibraryState.Populated
+        assertThat(populated.unassignedLyrics.map { it.name }).containsExactly("Lyric 1", "Lyric 2")
+
+        var createdSongId: String? = null
+        vm.createSongForLyrics("Train Song", doc1.id) { createdSongId = it }; advanceUntilIdle()
+        assertThat(createdSongId).isNotNull()
+        assertThat((vm.state.value as LibraryState.Populated).unassignedLyrics.map { it.id }).containsExactly(doc2.id)
+
+        vm.assignLyrics(doc2.id, createdSongId!!); advanceUntilIdle()
+        assertThat((vm.state.value as LibraryState.Populated).unassignedLyrics).isEmpty()
+        assertThat(lyrics.observeDocument(createdSongId).first()!!.sections.map { it.bodyText })
+            .containsExactly("Midnight train hook", "Second verse line").inOrder()
     }
 
     @Test
@@ -259,6 +287,35 @@ class SongViewModelsTest {
         val edited = (vm.state.value as SongDetailState.Loaded).notes.notes.single()
         assertThat(edited.bodyText).isEqualTo("Actually try @Verse 1 instead")
         assertThat(edited.sectionRefId).isEqualTo(savedNote.sectionRefId) // still Chorus, not re-resolved to Verse 1
+    }
+
+    @Test
+    fun `detail - lyrics edit persists immediately to local draft state before debounce and survives process interruption`() = runTest(dispatcher) {
+        val song = songs.create("Draft Song").getOrThrow()
+        val vm = detail()
+        subscribe(vm.state)
+        vm.bind(song.id); advanceUntilIdle()
+
+        vm.insertSection(SectionTag.VERSE); advanceUntilIdle()
+        val sectionId = lyrics.observeDocument(song.id).first()!!.sections.single().id
+
+        // Type lyrics WITHOUT advancing the 400ms debounce timer (simulating keystrokes right before process death)
+        vm.editSection(sectionId, "Caught in the rain")
+        assertThat(lyrics.getSectionDraft(sectionId)).isEqualTo("Caught in the rain")
+        assertThat(lyrics.observeDocument(song.id).first()!!.sections.single().bodyText).isEqualTo("Caught in the rain")
+
+        // Simulate a new ViewModel created after process restart and verify the local draft is recovered and flushed
+        val restartedVm = detail()
+        subscribe(restartedVm.state)
+        restartedVm.bind(song.id); advanceUntilIdle()
+        val recoveredDoc = (restartedVm.state.value as SongDetailState.Loaded).lyrics
+        val bodyText = when (recoveredDoc) {
+            is LyricsState.Editing -> recoveredDoc.document.sections.single().bodyText
+            is LyricsState.Autosaved -> recoveredDoc.document.sections.single().bodyText
+            else -> ""
+        }
+        assertThat(bodyText).isEqualTo("Caught in the rain")
+        assertThat(lyrics.getSectionDraft(sectionId)).isNull() // Flushed to canonical store
     }
 
     @Test

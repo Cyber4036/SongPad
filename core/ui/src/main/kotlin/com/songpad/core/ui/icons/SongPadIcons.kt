@@ -99,6 +99,16 @@ object SongPadIcons {
         }
     }
 
+    val Upload: ImageVector by lazy {
+        icon("Upload") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(9f, 16f); horizontalLineTo(15f); verticalLineTo(10f); horizontalLineTo(19f)
+                lineTo(12f, 3f); lineTo(5f, 10f); horizontalLineTo(9f); close()
+                moveTo(5f, 18f); verticalLineTo(20f); horizontalLineTo(19f); verticalLineTo(18f); close()
+            }
+        }
+    }
+
     val Waveform: ImageVector by lazy {
         icon("Waveform") {
             path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {

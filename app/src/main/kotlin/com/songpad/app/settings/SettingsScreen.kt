@@ -5,7 +5,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,6 +48,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.songpad.app.BuildConfig
 import com.songpad.core.model.take.QualityMode
+import com.songpad.core.ui.components.ImportBottomSheet
 import com.songpad.core.ui.components.SectionHeader
 import com.songpad.core.ui.components.SettingRow
 import com.songpad.core.ui.components.SettingsGroupCard
@@ -57,9 +61,15 @@ import com.songpad.core.ui.theme.Spacing
 import com.songpad.core.ui.theme.ThemeVariant
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenNudges: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenNudges: () -> Unit,
+    onOpenSong: (String) -> Unit = {},
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val showLicenses by viewModel.showLicenses.collectAsStateWithLifecycle()
+    val importSheet by viewModel.importSheet.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val c = SongPadTheme.colors
     val sysDark = isSystemInDarkTheme()
@@ -67,6 +77,18 @@ fun SettingsScreen(onBack: () -> Unit, onOpenNudges: () -> Unit, viewModel: Sett
     val notifGranted = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
     val openAppSettings = {
         context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            val name = runCatching {
+                context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                }
+            }.getOrNull() ?: uri.lastPathSegment ?: "imported_file"
+            val mime = context.contentResolver.getType(uri)
+            viewModel.importFile(name, mime) { context.contentResolver.openInputStream(uri) }
+        }
     }
 
     val currentVariant = ThemeVariant.fromName(state.themeVariant)
@@ -181,10 +203,16 @@ fun SettingsScreen(onBack: () -> Unit, onOpenNudges: () -> Unit, viewModel: Sett
                     subtitle = "${state.takeDirCount} take${if (state.takeDirCount == 1) "" else "s"} · ${state.storageUsedBytes.mb()}",
                     onClick = viewModel::refreshStorage,
                 )
+                HorizontalDivider(color = c.divider, thickness = 1.dp)
+                SettingRow(
+                    title = "Import songs, takes or lyrics",
+                    subtitle = "Restore exported .zip / .songpad / .bin bundles, audio files, or .txt lyrics",
+                    onClick = viewModel::openImportSheet,
+                )
             }
             Spacer(Modifier.height(Spacing.xs))
             Text(
-                text = "Recordings stay on this phone and aren't in cloud backup. Export songs or takes to keep a copy elsewhere.",
+                text = "Recordings stay on this phone and aren't in cloud backup. Export songs or takes to keep a copy elsewhere, and import them anytime.",
                 modifier = Modifier.padding(horizontal = 22.dp),
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
                 color = c.textSecondary,
@@ -200,12 +228,18 @@ fun SettingsScreen(onBack: () -> Unit, onOpenNudges: () -> Unit, viewModel: Sett
                 )
             }
 
-            SectionHeader("Export")
+            SectionHeader("Export & Import")
             SettingsGroupCard {
                 SettingRow(
                     title = "Formats",
-                    subtitle = "Stored copy (M4A / FLAC), WAV for DAWs, MP3 where available.",
+                    subtitle = "Direct .txt for lyrics, direct .mp3 / .wav / .m4a / .flac for single takes, and .zip bundles for songs.",
                     onClick = null,
+                )
+                HorizontalDivider(color = c.divider, thickness = 1.dp)
+                SettingRow(
+                    title = "Import from file",
+                    subtitle = "Supports .zip, legacy .songpad / .bin bundles, standalone audio, and .txt lyrics.",
+                    onClick = viewModel::openImportSheet,
                 )
             }
 
@@ -225,6 +259,30 @@ fun SettingsScreen(onBack: () -> Unit, onOpenNudges: () -> Unit, viewModel: Sett
         SongPadBottomSheet(onDismiss = { viewModel.setShowLicenses(false) }, title = "Open source licenses") {
             Text(LICENSES, Modifier.padding(Spacing.screen).verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
         }
+    }
+
+    importSheet?.let { sh ->
+        ImportBottomSheet(
+            title = "Import to SongPad",
+            subtitle = "Restore exported songs (.zip, .songpad, .bin), or bring in audio recordings and .txt lyrics.",
+            allowBundle = true,
+            isBusy = sh.isBusy,
+            statusTitle = sh.statusTitle,
+            statusBody = sh.statusBody,
+            isError = sh.isError,
+            onPickBundleOrAny = { importPicker.launch(arrayOf("*/*")) },
+            onPickAudio = { importPicker.launch(arrayOf("audio/*", "application/ogg", "application/flac", "*/*")) },
+            onPickLyrics = { importPicker.launch(arrayOf("text/*", "*/*")) },
+            primaryActionLabel = if (sh.importedSongId != null) "Open imported song" else null,
+            onPrimaryAction = if (sh.importedSongId != null) {
+                {
+                    val id = sh.importedSongId
+                    viewModel.closeImportSheet()
+                    onOpenSong(id)
+                }
+            } else null,
+            onDismiss = viewModel::closeImportSheet,
+        )
     }
 }
 

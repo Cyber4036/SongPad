@@ -228,6 +228,71 @@ fun UnfiledTakeRow(
 }
 
 @Composable
+fun UnfiledLyricsRow(
+    name: String,
+    metaLine: String,
+    onClick: () -> Unit,
+    onAssignToSong: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = SongPadTheme.colors
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Surface(
+            onClick = onClick,
+            shape = CircleShape,
+            color = c.accent2,
+            contentColor = c.bg,
+            modifier = Modifier.size(32.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = SongPadIcons.Lyrics,
+                    contentDescription = "Open $name",
+                    modifier = Modifier.size(15.dp),
+                )
+            }
+        }
+        Surface(
+            onClick = onClick,
+            color = Color.Transparent,
+            contentColor = c.text,
+            shape = RoundedCornerShape(Radii.sm),
+            modifier = Modifier.weight(1f),
+        ) {
+            Column {
+                Text(
+                    name,
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontFamily = SongPadFonts.heading,
+                        fontWeight = FontWeight.Normal,
+                        fontSize = 15.sp,
+                    ),
+                    color = c.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    metaLine,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = c.text.copy(alpha = 0.60f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        PrimaryButton(
+            text = "Add to a song",
+            onClick = onAssignToSong,
+            compact = true,
+        )
+    }
+}
+
+@Composable
 fun TakeListItem(
     name: String,
     typeLabel: String,

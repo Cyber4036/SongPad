@@ -42,13 +42,29 @@ data class Section(
         }
 }
 
-/** Exactly one primary document per Song (§6.1). */
+/**
+ * Primary lyrics document for a Song (`songId != null`) or an independent standalone lyrics document
+ * (`songId == null`, created without requiring a song or project name upfront).
+ */
 data class LyricsDocument(
     val id: String,
-    val songId: String,
+    val songId: String?,
     val sections: List<Section>,
     val meta: SyncMeta,
+    val name: String = "Lyrics",
 ) {
+    val isUnassigned: Boolean get() = songId == null
+    val hasNonEmptyText: Boolean get() = sections.any { it.bodyText.isNotBlank() }
+    val nonEmptySectionCount: Int get() = sections.count { it.bodyText.isNotBlank() }
+    val previewSnippet: String
+        get() = sections
+            .sortedBy { it.sortOrder }
+            .firstOrNull { it.bodyText.isNotBlank() }
+            ?.bodyText
+            ?.lineSequence()
+            ?.firstOrNull { it.isNotBlank() }
+            ?.trim()
+            .orEmpty()
     val plainText: String
         get() = sections.sortedBy { it.sortOrder }.joinToString("\n\n") { "[${it.displayLabel}]\n${it.bodyText}" }
 }

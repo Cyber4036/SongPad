@@ -94,6 +94,18 @@ class FakeTakeRepository(val store: InMemoryStore = InMemoryStore()) : TakeRepos
         return Result.success(copy)
     }
 
+    override suspend fun nextDefaultName(type: com.songpad.core.model.take.TakeType): String =
+        com.songpad.core.model.usecase.AutoIncrementNaming.nextName(
+            com.songpad.core.model.usecase.AutoIncrementNaming.takePrefix(type),
+            store.takes.value.values.filter { !it.meta.deleted }.map { it.name },
+        )
+
+    override suspend fun nextDefaultNameForPrefix(prefix: String): String =
+        com.songpad.core.model.usecase.AutoIncrementNaming.nextName(
+            prefix,
+            store.takes.value.values.filter { !it.meta.deleted }.map { it.name },
+        )
+
     private fun mutate(takeId: String, f: (Take) -> Take): Result<Unit> {
         val t = store.takes.value[takeId] ?: return domainFailure(DataError.NotFound("Take", takeId))
         store.takes.update { it + (takeId to f(t).let { u -> if (u.meta.deleted) u else u.copy(meta = u.meta.touched(store.clock.nowMillis())) }) }

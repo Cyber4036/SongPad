@@ -18,7 +18,7 @@ data class RecordKey(
 @Serializable data class SongDetailKey(val songId: String, val tab: String = "HOME", val targetId: String? = null) : NavKey
 @Serializable data class SearchKey(val songId: String? = null) : NavKey
 @Serializable data object NudgesKey : NavKey
-@Serializable data class ExportKey(val songId: String) : NavKey
+@Serializable data class ExportKey(val songId: String, val takeId: String? = null) : NavKey
 @Serializable data object SettingsKey : NavKey
 
 /** Top-level destinations own the bottom bar; everything else is pushed above them. */

@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 
 #include "ring_buffer.h"
 
@@ -22,6 +23,7 @@ public:
     static constexpr int32_t kSampleRate = 48000;
     static constexpr int32_t kChannels = 1;
     static constexpr uint32_t kRingSeconds = 2;  // >= 2 s of audio (§7.2 rule 6)
+    static constexpr uint32_t kMixBufferSamples = 4096;
 
     CaptureEngine();
     ~CaptureEngine() override;
@@ -58,8 +60,13 @@ public:
     bool errorOccurred() const { return errorFlag_.load(std::memory_order_acquire); }
 
 private:
+    int32_t openLocked(bool allowExclusive);
+    void closeLocked();
+
+    std::mutex streamMutex_;
     std::shared_ptr<oboe::AudioStream> stream_;
     std::unique_ptr<RingBuffer> ring_;
+    std::unique_ptr<int16_t[]> mixBuffer_;
     std::atomic<int64_t> framesCaptured_;
     std::atomic<bool> capturing_;
     std::atomic<bool> errorFlag_;
@@ -68,6 +75,7 @@ private:
     int32_t bufferSize_ = 0;
     bool lowLatency_ = false;
     bool aaudio_ = false;
+    bool openedExclusive_ = false;
 };
 
 }  // namespace songpad

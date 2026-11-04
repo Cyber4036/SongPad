@@ -8,7 +8,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
@@ -143,7 +145,13 @@ fun SongPadApp(viewModel: MainViewModel) {
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .consumeWindowInsets(padding)
+                .imePadding(),
+        ) {
             NavDisplay(
                 backStack = backStack,
                 onBack = { pop() },
@@ -184,6 +192,7 @@ fun SongPadApp(viewModel: MainViewModel) {
                             onLaunchPiano = { push(RecordKey(songId = it, initialType = "PIANO", autoStart = false, openLyrics = false)) },
                             onLaunchLyrics = { push(RecordKey(songId = it, initialType = "VOICE", autoStart = false, openLyrics = true)) },
                             onExport = { push(ExportKey(it)) },
+                            onExportTake = { songId, takeId -> push(ExportKey(songId, takeId)) },
                             onSearchInSong = { push(SearchKey(it)) },
                         )
                     }
@@ -206,8 +215,14 @@ fun SongPadApp(viewModel: MainViewModel) {
                             onLaunchLyrics = { push(RecordKey(songId = null, initialType = "VOICE", autoStart = false, openLyrics = true)) },
                         )
                     }
-                    entry<ExportKey> { key -> ExportScreen(songId = key.songId, onBack = { pop() }) }
-                    entry<SettingsKey> { SettingsScreen(onBack = { pop() }, onOpenNudges = { switchTopLevel(NudgesKey) }) }
+                    entry<ExportKey> { key -> ExportScreen(songId = key.songId, takeId = key.takeId, onBack = { pop() }) }
+                    entry<SettingsKey> {
+                        SettingsScreen(
+                            onBack = { pop() },
+                            onOpenNudges = { switchTopLevel(NudgesKey) },
+                            onOpenSong = { songId -> pop(); push(SongDetailKey(songId)) },
+                        )
+                    }
                 },
             )
         }

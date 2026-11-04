@@ -25,6 +25,8 @@ import com.songpad.core.model.data.SongRepository
 import com.songpad.core.model.data.TakeRepository
 import com.songpad.core.model.id.IdGenerator
 import com.songpad.core.model.id.UuidV7
+import com.songpad.core.model.lyrics.FileLyricsDraftStore
+import com.songpad.core.model.lyrics.LyricsDraftStore
 import com.songpad.core.model.time.Clock
 import dagger.Binds
 import dagger.Module
@@ -39,6 +41,7 @@ import javax.inject.Singleton
 object DataProvidersModule {
     @Provides @Singleton fun database(@ApplicationContext context: Context): SongPadDatabase = SongPadDatabase.build(context)
     @Provides @Singleton fun fileStore(@ApplicationContext context: Context): TakeFileStore = TakeFileStore(context.filesDir)
+    @Provides @Singleton fun lyricsDraftStore(@ApplicationContext context: Context): LyricsDraftStore = FileLyricsDraftStore(context.filesDir)
     @Provides @Singleton fun clock(): Clock = Clock.SYSTEM
     @Provides @Singleton fun idGenerator(): IdGenerator { val gen = UuidV7(); return IdGenerator { gen.next() } }
     @Provides @Singleton fun dataStore(@ApplicationContext context: Context): DataStore<Preferences> =

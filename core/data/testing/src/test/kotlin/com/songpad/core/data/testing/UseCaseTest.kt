@@ -8,7 +8,9 @@ import com.songpad.core.model.error.domainErrorOrNull
 import com.songpad.core.model.take.QualityMode
 import com.songpad.core.model.take.TakeStatus
 import com.songpad.core.model.take.TakeType
+import com.songpad.core.model.usecase.AssignLyricsToSongUseCase
 import com.songpad.core.model.usecase.AssignTakeToSongUseCase
+import com.songpad.core.model.usecase.CreateSongFromLyricsUseCase
 import com.songpad.core.model.usecase.CreateSongFromTakeUseCase
 import com.songpad.core.model.usecase.DiscardRecordingUseCase
 import com.songpad.core.model.usecase.FinalizeTakeUseCase
@@ -23,6 +25,7 @@ class UseCaseTest {
     private val settings = FakeSettingsRepository()
     private val takes = FakeTakeRepository(store)
     private val songs = FakeSongRepository(store)
+    private val lyrics = FakeLyricsRepository(store)
     private val transcodes = FakeTranscodeScheduler()
     private val storage = FakeStorageProbe()
     private val start = StartRecordingUseCase(engine, settings, store.ids, store.clock, storage)
@@ -35,7 +38,7 @@ class UseCaseTest {
         engine.simulateFrames(48_000L * 15)
 
         val take = finalize(session, "", newSongName = "Midnight Riff").getOrThrow()
-        assertThat(take.name).isEqualTo("Voice take")
+        assertThat(take.name).isEqualTo("Voice take 1")
         assertThat(take.status).isEqualTo(TakeStatus.TRANSCODING)
         assertThat(take.durationMs).isEqualTo(15_000)
         assertThat(take.songId).isNotNull()
@@ -47,6 +50,44 @@ class UseCaseTest {
         takes.observeForSong(take.songId!!).test {
             assertThat(awaitItem().map { it.id }).containsExactly(take.id)
         }
+    }
+
+    @Test
+    fun `unnamed takes auto-increment per take type`() = runTest {
+        val s1 = start(TakeType.VOICE, null).getOrThrow()
+        engine.simulateFrames(48_000L * 2)
+        val t1 = finalize(s1, "", null).getOrThrow()
+        assertThat(t1.name).isEqualTo("Voice take 1")
+
+        val s2 = start(TakeType.VOICE, null).getOrThrow()
+        engine.simulateFrames(48_000L * 2)
+        val t2 = finalize(s2, "", null).getOrThrow()
+        assertThat(t2.name).isEqualTo("Voice take 2")
+
+        val s3 = start(TakeType.PIANO, null).getOrThrow()
+        engine.simulateFrames(48_000L * 2)
+        val t3 = finalize(s3, "", null).getOrThrow()
+        assertThat(t3.name).isEqualTo("Piano take 1")
+    }
+
+    @Test
+    fun `standalone lyrics auto-increment and can be assigned to a new or existing song`() = runTest {
+        val doc1 = lyrics.createStandalone().getOrThrow()
+        val doc2 = lyrics.createStandalone().getOrThrow()
+        assertThat(doc1.name).isEqualTo("Lyric 1")
+        assertThat(doc2.name).isEqualTo("Lyric 2")
+        assertThat(doc1.isUnassigned).isTrue()
+
+        lyrics.updateSectionText(doc1.sections.single().id, "First standalone verse").getOrThrow()
+        lyrics.updateSectionText(doc2.sections.single().id, "Second standalone chorus").getOrThrow()
+
+        val newSong = CreateSongFromLyricsUseCase(songs, lyrics)("Neon Skyline", doc1.id).getOrThrow()
+        assertThat(lyrics.getDocumentById(doc1.id)!!.songId).isEqualTo(newSong.id)
+
+        // Assigning a second standalone lyric document to a song that already has lyrics appends its sections cleanly
+        AssignLyricsToSongUseCase(lyrics, songs)(doc2.id, newSong.id).getOrThrow()
+        val merged = lyrics.getDocumentById(doc1.id)!!
+        assertThat(merged.sections.map { it.bodyText }).containsExactly("First standalone verse", "Second standalone chorus").inOrder()
     }
 
     @Test
@@ -75,10 +116,12 @@ class UseCaseTest {
     fun `an empty capture is rejected and nothing is committed`() = runTest {
         val session = start(TakeType.VOICE, null).getOrThrow()
         val r = finalize(session, "x", null)
-        assertThat(r.domainErrorOrNull()).isEqualTo(CaptureError.NothingCaptured)
+        assertThat(r.domainErrorOrNull()).isInstanceToOrEqual()
         assertThat(store.takes.value).isEmpty()
         assertThat(transcodes.enqueued).isEmpty()
     }
+
+    private fun com.google.common.truth.Subject.isInstanceToOrEqual() = isEqualTo(CaptureError.NothingCaptured)
 
     @Test
     fun `voice plus piano commits ONE take with a midi sidecar`() = runTest {
@@ -87,6 +130,7 @@ class UseCaseTest {
         midi.onKeyDown(60, 100, 500_000_000); midi.onKeyUp(60, 900_000_000)
         val take = finalize(session, "", null).getOrThrow()
         assertThat(take.type).isEqualTo(TakeType.VOICE_PIANO)
+        assertThat(take.name).isEqualTo("Voice + Piano take 1")
         assertThat(take.midi).isNotNull()
         assertThat(take.midi!!.eventCount).isEqualTo(2)
         assertThat(store.takes.value).hasSize(1)

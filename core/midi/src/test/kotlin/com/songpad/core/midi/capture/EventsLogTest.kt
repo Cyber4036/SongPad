@@ -75,4 +75,34 @@ class EventsLogTest {
         assertThat(files.exists(TakePaths.eventsLog("r"))).isFalse()
         assertThat(files.exists(TakePaths.midi("r"))).isTrue()
     }
+
+    @Test
+    fun `log reads 20+ records without BufferUnderflowException and beginTake is idempotent`() = runTest {
+        val f = File(tmp.root, "many_events.log")
+        val log = EventsLog(f)
+        log.open()
+        for (i in 0 until 24) {
+            val isOn = i % 2 == 0
+            log.append(MidiEvent(frameIndex = i * 1_000L, note = 60 + (i / 2) % 12, velocity = if (isOn) 100 else 0, isNoteOn = isOn))
+            if (i % 4 == 0) log.sync()
+        }
+        log.close()
+
+        val events = EventsLog.read(f)
+        assertThat(events).hasSize(24)
+        assertThat(events.first().frameIndex).isEqualTo(0L)
+        assertThat(events.last().frameIndex).isEqualTo(23_000L)
+
+        // Verify duplicate beginTake for the same takeId preserves recorded events.
+        val files = TakeFileStore(tmp.root)
+        val engine = MidiCaptureEngineImpl(FakeAudioRecorderEngine(), files, SequentialIdGenerator("id"))
+        engine.beginTake("dup_take")
+        engine.onKeyDown(60, 100, 1_000_000_000L)
+        engine.beginTake("dup_take") // Idempotent: must not wipe the in-flight take
+        engine.onKeyUp(60, 1_500_000_000L)
+        val committed = engine.commit("dup_take").getOrThrow()
+        assertThat(committed).isNotNull()
+        assertThat(committed!!.eventCount).isEqualTo(2)
+    }
 }
+

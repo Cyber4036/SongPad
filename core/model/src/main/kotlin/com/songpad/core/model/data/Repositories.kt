@@ -39,6 +39,10 @@ interface TakeRepository {
     suspend fun recoverOrphan(orphan: OrphanedTake, name: String): Result<Take>
     suspend fun hardDeleteOrphan(takeId: String): Result<Unit>
     suspend fun duplicate(takeId: String): Result<Take>
+    suspend fun nextDefaultName(type: com.songpad.core.model.take.TakeType): String =
+        com.songpad.core.model.usecase.AutoIncrementNaming.nextName(com.songpad.core.model.usecase.AutoIncrementNaming.takePrefix(type), emptyList())
+    suspend fun nextDefaultNameForPrefix(prefix: String): String =
+        com.songpad.core.model.usecase.AutoIncrementNaming.nextName(prefix, emptyList())
 }
 
 interface SongRepository {
@@ -76,7 +80,7 @@ data class SearchResults(
 
 /** `snippet` carries `<b>…</b>` markers from FTS5 `snippet()`; the UI turns them into highlight spans. */
 data class SongMatch(val songId: String, val name: String, val snippet: String, val rank: Double)
-data class SectionMatch(val sectionId: String, val songId: String, val label: String, val snippet: String, val rank: Double)
+data class SectionMatch(val sectionId: String, val songId: String, val label: String, val snippet: String, val rank: Double, val documentId: String = "")
 data class NoteMatch(val noteId: String, val songId: String, val snippet: String, val rank: Double)
 data class TakeMatch(val takeId: String, val songId: String?, val name: String, val snippet: String, val rank: Double)
 
@@ -90,6 +94,24 @@ interface LyricsRepository {
     suspend fun updateSectionTag(sectionId: String, tag: SectionTag, customLabel: String? = null): Result<Unit>
     suspend fun moveSection(sectionId: String, toIndex: Int): Result<Unit>
     suspend fun deleteSection(sectionId: String): Result<Unit>
+
+    // ── Standalone / Unassigned Lyrics additions ──
+    fun observeDocumentById(documentId: String): Flow<LyricsDocument?> = kotlinx.coroutines.flow.flowOf(null)
+    fun observeUnassigned(): Flow<List<LyricsDocument>> = kotlinx.coroutines.flow.flowOf(emptyList())
+    suspend fun getDocumentById(documentId: String): LyricsDocument? = null
+    suspend fun createStandalone(name: String? = null): Result<LyricsDocument> =
+        Result.failure(UnsupportedOperationException("createStandalone not implemented"))
+    suspend fun insertSectionInDocument(documentId: String, tag: SectionTag, customLabel: String? = null, atIndex: Int? = null): Result<Section> =
+        Result.failure(UnsupportedOperationException("insertSectionInDocument not implemented"))
+    suspend fun renameDocument(documentId: String, name: String): Result<Unit> = Result.success(Unit)
+    suspend fun assignToSong(documentId: String, songId: String): Result<Unit> = Result.success(Unit)
+    suspend fun deleteDocument(documentId: String): Result<Unit> = Result.success(Unit)
+
+    // ── Immediate local draft auto-save (prevents data loss on process interruption) ──
+    fun saveSectionDraft(sectionId: String, bodyText: String) = Unit
+    fun getSectionDraft(sectionId: String): String? = null
+    fun observeSectionDrafts(): Flow<Map<String, String>> = kotlinx.coroutines.flow.flowOf(emptyMap())
+    suspend fun flushDrafts(): Result<Unit> = Result.success(Unit)
 }
 
 interface NoteRepository {

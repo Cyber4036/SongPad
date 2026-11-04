@@ -9,6 +9,9 @@ import com.songpad.core.model.error.DomainException
 import com.songpad.core.model.error.domainFailure
 import com.songpad.core.model.error.runDomain
 import com.songpad.core.model.id.IdGenerator
+import com.songpad.core.model.lyrics.InMemoryLyricsDraftStore
+import com.songpad.core.model.lyrics.LyricsDraftStore
+import com.songpad.core.model.lyrics.withDrafts
 import com.songpad.core.model.song.Song
 import com.songpad.core.model.song.SongDetail
 import com.songpad.core.model.song.SongFilter
@@ -29,7 +32,14 @@ class SongRepositoryImpl @Inject constructor(
     private val takeRepository: TakeRepositoryImpl,
     private val ids: IdGenerator,
     private val clock: Clock,
+    private val draftStore: LyricsDraftStore,
 ) : SongRepository {
+    constructor(
+        db: SongPadDatabase,
+        takeRepository: TakeRepositoryImpl,
+        ids: IdGenerator,
+        clock: Clock,
+    ) : this(db, takeRepository, ids, clock, InMemoryLyricsDraftStore())
 
     private val songs get() = db.songDao()
 
@@ -52,7 +62,10 @@ class SongRepositoryImpl @Inject constructor(
     override fun observeSong(songId: String): Flow<SongDetail?> = songs.observe(songId).flatMapLatest { song ->
         if (song == null) return@flatMapLatest flowOf(null)
         val lyrics = db.lyricsDao().observeDocument(songId).flatMapLatest { doc ->
-            if (doc == null) flowOf(null) else db.lyricsDao().observeSections(doc.id).map { doc.toDomain(it) }
+            if (doc == null) flowOf(null)
+            else combine(db.lyricsDao().observeSections(doc.id), draftStore.drafts) { secs, drafts ->
+                doc.toDomain(secs).withDrafts(drafts)
+            }
         }
         combine(takeRepository.observeForSong(songId), lyrics, db.noteDao().observeForSong(songId)) { takes, doc, notes ->
             SongDetail(song.toDomain(), takes, doc, notes.map { it.toDomain() })

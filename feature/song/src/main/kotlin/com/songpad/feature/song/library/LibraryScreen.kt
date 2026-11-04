@@ -1,5 +1,10 @@
 package com.songpad.feature.song.library
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -8,35 +13,61 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.songpad.core.audio.recovery.AudioRecoveryManager
 import com.songpad.core.model.data.SearchResults
+import com.songpad.core.model.lyrics.LyricsDocument
+import com.songpad.core.model.lyrics.SectionTag
 import com.songpad.core.model.song.Song
 import com.songpad.core.model.song.SongFilter
 import com.songpad.core.model.song.SongStatus
@@ -51,6 +82,7 @@ import com.songpad.core.ui.components.EditorialHeader
 import com.songpad.core.ui.components.EmptyState
 import com.songpad.core.ui.components.FilterPill
 import com.songpad.core.ui.components.IconAction
+import com.songpad.core.ui.components.ImportBottomSheet
 import com.songpad.core.ui.components.InlineDisclosure
 import com.songpad.core.ui.components.PillSearchBar
 import com.songpad.core.ui.components.PrimaryButton
@@ -63,6 +95,7 @@ import com.songpad.core.ui.components.SongPadBottomSheet
 import com.songpad.core.ui.components.TagChip
 import com.songpad.core.ui.components.TagTone
 import com.songpad.core.ui.components.TextInputDialog
+import com.songpad.core.ui.components.UnfiledLyricsRow
 import com.songpad.core.ui.components.UnfiledTakeRow
 import com.songpad.core.ui.components.UnfiledTakesContainer
 import com.songpad.core.ui.icons.SongPadIcons
@@ -92,7 +125,15 @@ fun LibraryScreen(
     val recovery by viewModel.recoveryState.collectAsStateWithLifecycle()
     val query by viewModel.searchQuery.collectAsStateWithLifecycle()
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
-    val c = SongPadTheme.colors
+    val context = LocalContext.current
+
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            val name = context.resolveDisplayName(uri) ?: "imported_file"
+            val mime = context.contentResolver.getType(uri)
+            viewModel.importFile(name, mime) { context.contentResolver.openInputStream(uri) }
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -100,6 +141,12 @@ fun LibraryScreen(
                 kicker = "Caught so far",
                 title = "Songs",
                 actions = {
+                    IconAction(
+                        icon = SongPadIcons.Upload,
+                        contentDescription = "Import",
+                        onClick = viewModel::openImportSheet,
+                        outlined = true,
+                    )
                     IconAction(
                         icon = Icons.Filled.Settings,
                         contentDescription = "Settings",
@@ -122,6 +169,7 @@ fun LibraryScreen(
                     results = searchResults,
                     onOpenSong = onOpenSong,
                     onOpenLyrics = onOpenLyrics,
+                    onOpenStandaloneLyrics = { docId -> viewModel.openStandaloneLyrics(docId) },
                     onOpenNotes = onOpenNotes,
                     onOpenTakes = onOpenTakes,
                     modifier = Modifier.weight(1f),
@@ -157,8 +205,8 @@ fun LibraryScreen(
                         onAction = onRecord,
                         modifier = Modifier.weight(1f),
                     )
-                    is LibraryState.Populated -> SongList(s.songs, s.unassignedTakes, s.nowPlaying, s.filter, onOpenSong, viewModel, Modifier.weight(1f))
-                    is LibraryState.Filtered -> SongList(s.songs, s.unassignedTakes, s.nowPlaying, s.filter, onOpenSong, viewModel, Modifier.weight(1f))
+                    is LibraryState.Populated -> SongList(s.songs, s.unassignedTakes, s.unassignedLyrics, s.nowPlaying, s.filter, onOpenSong, viewModel, Modifier.weight(1f))
+                    is LibraryState.Filtered -> SongList(s.songs, s.unassignedTakes, s.unassignedLyrics, s.nowPlaying, s.filter, onOpenSong, viewModel, Modifier.weight(1f))
                 }
             }
 
@@ -225,6 +273,62 @@ fun LibraryScreen(
             onConfirm = { viewModel.deleteTake(sh.take.id) },
             onDismiss = viewModel::closeSheet,
         )
+        is LibrarySheet.AssignLyrics -> SongPadBottomSheet(
+            onDismiss = viewModel::closeSheet,
+            title = "Add to song",
+            subtitle = "${sh.document.name} · ${sh.document.nonEmptySectionCount} section${if (sh.document.nonEmptySectionCount == 1) "" else "s"}",
+        ) {
+            SheetOptionRow(
+                label = "+ Create a new song from these lyrics",
+                onClick = { viewModel.openNewSongForLyrics(sh.document) },
+                accent = true,
+            )
+            sh.songs.forEach { song ->
+                SheetOptionRow(
+                    label = song.name,
+                    meta = "${song.sectionCount} section${if (song.sectionCount == 1) "" else "s"}",
+                    onClick = { viewModel.assignLyrics(sh.document.id, song.id) },
+                )
+            }
+        }
+        is LibrarySheet.NewSongForLyrics -> TextInputDialog(
+            title = "New song",
+            label = "Song name",
+            initialValue = "",
+            confirmLabel = "Create",
+            onConfirm = { name -> viewModel.createSongForLyrics(name, sh.document.id, onOpenSong) },
+            onDismiss = viewModel::closeSheet,
+        )
+        is LibrarySheet.EditStandaloneLyrics -> {
+            val doc by viewModel.observeStandaloneLyrics(sh.documentId).collectAsStateWithLifecycle(initialValue = null)
+            doc?.let { currentDoc ->
+                StandaloneLyricsEditorSheet(
+                    document = currentDoc,
+                    onEditSection = viewModel::editStandaloneSection,
+                    onAddSection = { viewModel.insertStandaloneSection(currentDoc.id, SectionTag.VERSE, null) },
+                    onDeleteSection = viewModel::deleteStandaloneSection,
+                    onAssignToSong = { viewModel.openAssignLyricsSheet(currentDoc) },
+                    onRename = { viewModel.openRenameStandaloneLyrics(currentDoc) },
+                    onDelete = { viewModel.requestDeleteStandaloneLyrics(currentDoc) },
+                    onDismiss = viewModel::closeSheet,
+                )
+            }
+        }
+        is LibrarySheet.RenameStandaloneLyrics -> TextInputDialog(
+            title = "Rename lyrics",
+            label = "Lyrics name",
+            initialValue = sh.document.name,
+            confirmLabel = "Rename",
+            onConfirm = { name -> viewModel.renameStandaloneLyrics(sh.document.id, name) },
+            onDismiss = viewModel::closeSheet,
+        )
+        is LibrarySheet.ConfirmDeleteStandaloneLyrics -> ConfirmDialog(
+            title = "Delete \"${sh.document.name}\"?",
+            body = "These standalone lyrics will be removed from your library.",
+            confirmLabel = "Delete",
+            onConfirm = { viewModel.deleteStandaloneLyrics(sh.document.id) },
+            onDismiss = viewModel::closeSheet,
+        )
         is LibrarySheet.SongOptions -> SongPadBottomSheet(
             onDismiss = viewModel::closeSheet,
             title = sh.song.name,
@@ -266,6 +370,239 @@ fun LibraryScreen(
             onConfirm = { viewModel.deleteSong(sh.song.id) },
             onDismiss = viewModel::closeSheet,
         )
+        is LibrarySheet.Import -> ImportBottomSheet(
+            title = "Import to SongPad",
+            subtitle = "Restore exported songs (.zip, .songpad, .bin), or bring in audio recordings and .txt lyrics.",
+            allowBundle = true,
+            isBusy = sh.isBusy,
+            statusTitle = sh.statusTitle,
+            statusBody = sh.statusBody,
+            isError = sh.isError,
+            onPickBundleOrAny = { importPicker.launch(arrayOf("*/*")) },
+            onPickAudio = { importPicker.launch(arrayOf("audio/*", "application/ogg", "application/flac", "*/*")) },
+            onPickLyrics = { importPicker.launch(arrayOf("text/*", "*/*")) },
+            primaryActionLabel = if (sh.importedSongId != null) "Open imported song" else null,
+            onPrimaryAction = if (sh.importedSongId != null) {
+                {
+                    val id = sh.importedSongId
+                    viewModel.closeSheet()
+                    onOpenSong(id)
+                }
+            } else null,
+            onDismiss = viewModel::closeSheet,
+        )
+    }
+}
+
+internal fun Context.resolveDisplayName(uri: Uri): String? = runCatching {
+    contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) cursor.getString(0) else null
+    }
+}.getOrNull() ?: uri.lastPathSegment
+
+@Composable
+private fun StandaloneLyricsEditorSheet(
+    document: LyricsDocument,
+    onEditSection: (String, String) -> Unit,
+    onAddSection: () -> Unit,
+    onDeleteSection: (String) -> Unit,
+    onAssignToSong: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = SongPadTheme.colors
+    val sorted = remember(document) { document.sections.sortedBy { it.sortOrder } }
+    val focusManager = LocalFocusManager.current
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+
+    var focusedSectionId by remember { mutableStateOf<String?>(null) }
+    var imeWasVisible by remember { mutableStateOf(false) }
+    var knownSectionIds by remember { mutableStateOf<Set<String>?>(null) }
+    var autoFocusSectionId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(isImeVisible) {
+        if (imeWasVisible && !isImeVisible) {
+            focusedSectionId = null
+            focusManager.clearFocus()
+        }
+        imeWasVisible = isImeVisible
+    }
+
+    LaunchedEffect(sorted.map { it.id }) {
+        val currentIds = sorted.map { it.id }.toSet()
+        val prev = knownSectionIds
+        if (prev != null && currentIds.size > prev.size) {
+            val addedId = sorted.lastOrNull { it.id !in prev }?.id
+            if (addedId != null) {
+                focusedSectionId = addedId
+                autoFocusSectionId = addedId
+            }
+        }
+        knownSectionIds = currentIds
+    }
+
+    val displaySections = remember(sorted, focusedSectionId) {
+        val active = sorted.firstOrNull { it.id == focusedSectionId }
+        if (active != null) {
+            listOf(active) + sorted.filterNot { it.id == active.id }
+        } else {
+            sorted
+        }
+    }
+
+    SongPadBottomSheet(
+        onDismiss = onDismiss,
+        title = document.name,
+        subtitle = "Unfiled lyrics · ${document.nonEmptySectionCount} section${if (document.nonEmptySectionCount == 1) "" else "s"}",
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            displaySections.forEach { sec ->
+                key(sec.id) {
+                    val isLevitated = focusedSectionId == sec.id
+                    val isDimmed = focusedSectionId != null && !isLevitated
+                    var text by remember(sec.id) { mutableStateOf(sec.bodyText) }
+                    LaunchedEffect(sec.bodyText) {
+                        if (!isLevitated && text != sec.bodyText) {
+                            text = sec.bodyText
+                        }
+                    }
+                    val focusRequester = remember { FocusRequester() }
+                    LaunchedEffect(autoFocusSectionId == sec.id) {
+                        if (autoFocusSectionId == sec.id) {
+                            runCatching { focusRequester.requestFocus() }
+                            autoFocusSectionId = null
+                        }
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = c.bg,
+                        border = BorderStroke(if (isLevitated) 1.5.dp else 1.dp, if (isLevitated) c.accent else c.divider),
+                        shadowElevation = if (isLevitated) 4.dp else 0.dp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .alpha(if (isDimmed) 0.45f else 1f),
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    TagChip(text = sec.displayLabel, tone = TagTone.Accent)
+                                    if (isLevitated) {
+                                        Text(
+                                            text = "ACTIVE",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 10.sp,
+                                                letterSpacing = 0.8.sp,
+                                            ),
+                                            color = c.accent,
+                                        )
+                                    }
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    if (isLevitated) {
+                                        Surface(
+                                            onClick = {
+                                                focusedSectionId = null
+                                                focusManager.clearFocus()
+                                            },
+                                            shape = RoundedCornerShape(Radii.pill),
+                                            color = c.accent,
+                                            contentColor = c.onAccent,
+                                        ) {
+                                            Text(
+                                                text = "Done",
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontSize = 11.sp,
+                                                ),
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                            )
+                                        }
+                                    }
+                                    if (sorted.size > 1) {
+                                        Surface(
+                                            onClick = { onDeleteSection(sec.id) },
+                                            shape = CircleShape,
+                                            color = Color.Transparent,
+                                            modifier = Modifier.size(24.dp),
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Filled.Close, "Delete section", tint = c.textTertiary, modifier = Modifier.size(14.dp))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            BasicTextField(
+                                value = text,
+                                onValueChange = { text = it; onEditSection(sec.id, it) },
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                    color = c.text,
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
+                                ),
+                                cursorBrush = SolidColor(c.accent),
+                                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                                minLines = if (isLevitated) 3 else 2,
+                                maxLines = if (isLevitated) 6 else Int.MAX_VALUE,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 40.dp)
+                                    .focusRequester(focusRequester)
+                                    .onFocusChanged { focusState ->
+                                        if (focusState.isFocused) {
+                                            focusedSectionId = sec.id
+                                        }
+                                    },
+                                decorationBox = { inner ->
+                                    Box(Modifier.fillMaxWidth()) {
+                                        if (text.isEmpty()) {
+                                            Text(
+                                                text = "Write lyrics…",
+                                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                                                color = c.textTertiary,
+                                            )
+                                        }
+                                        inner()
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SecondaryButton(
+                    text = "+ Section",
+                    onClick = {
+                        focusManager.clearFocus()
+                        focusedSectionId = null
+                        onAddSection()
+                    },
+                )
+                PrimaryButton(text = "Add to a song", onClick = onAssignToSong, compact = true)
+            }
+            SheetOptionRow(label = "Rename lyrics", onClick = onRename)
+            SheetOptionRow(label = "Delete lyrics", destructive = true, onClick = onDelete)
+        }
     }
 }
 
@@ -275,6 +612,7 @@ private fun InlineSearchResultsList(
     results: SearchResults?,
     onOpenSong: (String) -> Unit,
     onOpenLyrics: (String, String) -> Unit,
+    onOpenStandaloneLyrics: (String) -> Unit = {},
     onOpenNotes: (String, String) -> Unit,
     onOpenTakes: (String, String) -> Unit,
     modifier: Modifier = Modifier,
@@ -318,9 +656,15 @@ private fun InlineSearchResultsList(
                 SearchResultCard(
                     badge = m.label,
                     badgeTone = TagTone.Accent2,
-                    title = "Lyric section",
+                    title = if (m.songId.isEmpty()) "Unfiled lyrics" else "Lyric section",
                     snippet = highlightSnippet(m.snippet, c.accent),
-                    onClick = { onOpenLyrics(m.songId, m.sectionId) },
+                    onClick = {
+                        if (m.songId.isNotEmpty()) {
+                            onOpenLyrics(m.songId, m.sectionId)
+                        } else if (m.documentId.isNotEmpty()) {
+                            onOpenStandaloneLyrics(m.documentId)
+                        }
+                    },
                 )
             }
         }
@@ -471,6 +815,7 @@ private fun RecoveryBanner(state: AudioRecoveryManager.RecoveryState, vm: Librar
 private fun SongList(
     songs: List<Song>,
     unassigned: List<Take>,
+    unassignedLyrics: List<LyricsDocument>,
     nowPlaying: NowPlaying?,
     filter: SongFilter,
     onOpenSong: (String) -> Unit,
@@ -483,7 +828,7 @@ private fun SongList(
         contentPadding = PaddingValues(horizontal = Spacing.screen, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(Spacing.cardGap),
     ) {
-        if (unassigned.isNotEmpty() && filter == SongFilter.ALL) {
+        if ((unassigned.isNotEmpty() || unassignedLyrics.isNotEmpty()) && filter == SongFilter.ALL) {
             item(key = "unassigned-container") {
                 UnfiledTakesContainer {
                     unassigned.forEach { take ->
@@ -493,6 +838,23 @@ private fun SongList(
                             isPlaying = nowPlaying?.take?.id == take.id && nowPlaying.isPlaying,
                             onPlayPause = { vm.togglePlayPause(take) },
                             onAssignToSong = { vm.openAssignSheet(take) },
+                        )
+                    }
+                    unassignedLyrics.forEach { doc ->
+                        val sectionCount = doc.nonEmptySectionCount.coerceAtLeast(1)
+                        val sectionLabel = "$sectionCount section${if (sectionCount == 1) "" else "s"}"
+                        val snippet = doc.previewSnippet
+                        val metaLine = buildString {
+                            append(sectionLabel)
+                            if (snippet.isNotEmpty()) append(" · \"$snippet\"")
+                            append(" · ")
+                            append(doc.meta.updatedAt.relativeTimeLabel())
+                        }
+                        UnfiledLyricsRow(
+                            name = doc.name,
+                            metaLine = metaLine,
+                            onClick = { vm.openStandaloneLyrics(doc.id) },
+                            onAssignToSong = { vm.openAssignLyricsSheet(doc) },
                         )
                     }
                 }

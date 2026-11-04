@@ -38,6 +38,6 @@ internal fun TakeEntity.toDomain(audio: AudioAssetEntity?, midi: MidiAssetEntity
     Take(id, songId, name, TakeType.valueOf(type), TakeStatus.valueOf(status), durationMs, audio?.toDomain(), midi?.toDomain(), sync.toMeta())
 
 internal fun SectionEntity.toDomain() = Section(id, documentId, SectionTag.fromStored(tag), customLabel, number, bodyText, sortOrder, sync.toMeta())
-internal fun LyricsDocumentEntity.toDomain(sections: List<SectionEntity>) = LyricsDocument(id, songId, sections.map { it.toDomain() }, sync.toMeta())
+internal fun LyricsDocumentEntity.toDomain(sections: List<SectionEntity>) = LyricsDocument(id, songId, sections.map { it.toDomain() }, sync.toMeta(), name.ifBlank { "Lyrics" })
 internal fun NoteEntity.toDomain() = Note(id, songId, bodyText, voiceTakeId, mediaUri, sectionRefId, takeRefId, sync.toMeta())
 internal fun NudgeEntity.toDomain() = Nudge(id, targetSongId, targetTakeId, runCatching { NudgeKind.valueOf(kind) }.getOrDefault(NudgeKind.USER_REMINDER), title, body, isRead == 1, sync.toMeta())

@@ -37,9 +37,10 @@ class FinalizeTakeUseCase(
             midi.commit(session.takeId).getOrElse { return Result.failure(it) }
         }
 
+        val resolvedName = takeName.trim().ifBlank { takes.nextDefaultName(session.type) }
         val draft = TakeDraft(
             takeId = session.takeId,
-            name = takeName.ifBlank { defaultTakeName(session) },
+            name = resolvedName,
             type = session.type,
             songId = session.songId,
             newSongName = newSongName?.takeIf { session.songId == null && it.isNotBlank() },
@@ -51,11 +52,5 @@ class FinalizeTakeUseCase(
             settings.markFirstTakeSaved()
             transcodes.enqueue(it.id)
         }
-    }
-
-    private fun defaultTakeName(session: CaptureSession): String = when (session.type) {
-        TakeType.VOICE -> "Voice take"
-        TakeType.PIANO -> "Piano take"
-        TakeType.VOICE_PIANO -> "Voice + Piano take"
     }
 }

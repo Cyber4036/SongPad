@@ -9,19 +9,23 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
@@ -35,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,10 +48,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
@@ -151,9 +162,15 @@ fun RecordScreen(
                     viewModel.dispatch(CaptureIntent.PermissionResult(PermissionState.Granted))
                 }
             }
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                viewModel.flushLyricsDrafts()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.flushLyricsDrafts()
+        }
     }
 
     val takeOpen = state.holdsOpenTake()
@@ -162,10 +179,10 @@ fun RecordScreen(
             state is CaptureState.Saving -> Unit
             state is CaptureState.Failed -> {
                 viewModel.dispatch(CaptureIntent.Reset)
-                onClose()
+                viewModel.finishStandaloneLyricsSession { onClose() }
             }
             takeOpen -> viewModel.dispatch(CaptureIntent.RequestDiscard)
-            else -> onClose()
+            else -> viewModel.finishStandaloneLyricsSession { onClose() }
         }
     }
     BackHandler(enabled = takeOpen, onBack = close)
@@ -179,6 +196,7 @@ fun RecordScreen(
         activeLyrics = activeLyrics,
         availableSongs = availableSongs,
         openLyricsInitially = openLyrics,
+        onEnsureStandaloneLyrics = viewModel::ensureStandaloneLyricsForCapture,
         onSelectSongForLyrics = viewModel::selectSongForCapture,
         onCreateSongForLyrics = { name, after -> viewModel.createSongForCapture(name, after) },
         onEditLyricsSection = viewModel::editLyricsSection,
@@ -209,6 +227,7 @@ fun RecordContent(
     activeLyrics: LyricsDocument? = null,
     availableSongs: List<Song> = emptyList(),
     openLyricsInitially: Boolean = false,
+    onEnsureStandaloneLyrics: () -> Unit = {},
     onSelectSongForLyrics: (String) -> Unit = {},
     onCreateSongForLyrics: (String, (String) -> Unit) -> Unit = { _, _ -> },
     onEditLyricsSection: (String, String) -> Unit = { _, _ -> },
@@ -221,7 +240,7 @@ fun RecordContent(
     var keySizeOrd by rememberSaveable { mutableIntStateOf(PianoKeySize.MEDIUM.ordinal) }
     val keySize = PianoKeySize.entries[keySizeOrd.coerceIn(0, PianoKeySize.entries.lastIndex)]
 
-    var lyricsLayer by rememberSaveable { mutableStateOf(openLyricsInitially && boundSongId != null) }
+    var lyricsLayer by rememberSaveable { mutableStateOf(openLyricsInitially) }
     var initialLyricsHandled by rememberSaveable { mutableStateOf(false) }
     var showPickSongSheet by remember { mutableStateOf(false) }
     var showNewSongDialog by remember { mutableStateOf(false) }
@@ -231,17 +250,20 @@ fun RecordContent(
     LaunchedEffect(openLyricsInitially, boundSongId) {
         if (openLyricsInitially && !initialLyricsHandled) {
             initialLyricsHandled = true
-            if (boundSongId != null) {
-                lyricsLayer = true
-            } else {
-                showPickSongSheet = true
+            lyricsLayer = true
+            if (boundSongId == null) {
+                onEnsureStandaloneLyrics()
             }
         }
     }
 
     LaunchedEffect(lyricsLayer, boundSongId, activeLyrics) {
-        if (lyricsLayer && boundSongId != null && activeLyrics != null && activeLyrics.sections.isEmpty()) {
-            onInsertLyricsSection(SectionTag.VERSE, null)
+        if (lyricsLayer) {
+            if (boundSongId == null && activeLyrics == null) {
+                onEnsureStandaloneLyrics()
+            } else if (activeLyrics != null && activeLyrics.sections.isEmpty()) {
+                onInsertLyricsSection(SectionTag.VERSE, null)
+            }
         }
     }
 
@@ -269,22 +291,25 @@ fun RecordContent(
     fun toggleLyrics() {
         if (lyricsLayer) {
             lyricsLayer = false
-        } else if (boundSongId != null) {
+        } else {
             lyricsLayer = true
-            if (activeLyrics == null || activeLyrics.sections.isEmpty()) {
+            if (boundSongId == null && activeLyrics == null) {
+                onEnsureStandaloneLyrics()
+            } else if (activeLyrics == null || activeLyrics.sections.isEmpty()) {
                 onInsertLyricsSection(SectionTag.VERSE, null)
             }
-        } else {
-            showPickSongSheet = true
         }
     }
+
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val compactForLyricsKeyboard = isImeVisible && lyricsLayer
 
     Column(Modifier.fillMaxSize().background(c.bg)) {
         // Top Bar: [✕ Close] + [Voice] [Piano] [Lyrics] layer pills
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = Spacing.screen, vertical = 10.dp),
+                .padding(horizontal = Spacing.screen, vertical = if (compactForLyricsKeyboard) 6.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
@@ -320,53 +345,58 @@ fun RecordContent(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 22.dp, vertical = 4.dp),
+                .padding(horizontal = 22.dp, vertical = if (compactForLyricsKeyboard) 2.dp else 4.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                if (state is CaptureState.Recording) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(c.record),
+            if (!compactForLyricsKeyboard) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    if (state is CaptureState.Recording) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(c.record),
+                        )
+                    }
+                    Text(
+                        text = when (state) {
+                            is CaptureState.Recording -> "RECORDING"
+                            is CaptureState.Paused, is CaptureState.Reviewing -> "PAUSED — TAP WAVEFORM TO SCRUB"
+                            is CaptureState.Interrupted -> "INTERRUPTED"
+                            else -> "READY WHEN YOU ARE"
+                        },
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.1.sp,
+                            fontSize = 11.sp,
+                        ),
+                        color = when (state) {
+                            is CaptureState.Recording -> c.record
+                            else -> c.textTertiary
+                        },
                     )
                 }
-                Text(
-                    text = when (state) {
-                        is CaptureState.Recording -> "RECORDING"
-                        is CaptureState.Paused, is CaptureState.Reviewing -> "PAUSED — TAP WAVEFORM TO SCRUB"
-                        is CaptureState.Interrupted -> "INTERRUPTED"
-                        else -> "READY WHEN YOU ARE"
-                    },
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.1.sp,
-                        fontSize = 11.sp,
-                    ),
-                    color = when (state) {
-                        is CaptureState.Recording -> c.record
-                        else -> c.textTertiary
-                    },
-                )
+                Spacer(Modifier.height(2.dp))
             }
-            Spacer(Modifier.height(2.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = activeSongName ?: if (boundSongId != null) "Song take" else "Loose idea",
+                    text = activeSongName
+                        ?: activeLyrics?.name?.takeIf { lyricsLayer }
+                        ?: if (boundSongId != null) "Song take" else "Loose idea",
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontFamily = SongPadFonts.heading,
-                        fontSize = 22.sp,
+                        fontSize = if (compactForLyricsKeyboard) 18.sp else 22.sp,
                     ),
                     color = c.text,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
                 if (lyricsLayer && (state is CaptureState.Recording || state is CaptureState.Paused || state is CaptureState.Reviewing)) {
                     val elapsed = when (state) {
@@ -391,6 +421,12 @@ fun RecordContent(
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                         )
                     }
+                } else if (lyricsLayer && state is CaptureState.Ready && activeLyrics?.hasNonEmptyText == true) {
+                    PrimaryButton(
+                        text = "Done",
+                        onClick = onClose,
+                        compact = true,
+                    )
                 }
             }
         }
@@ -437,7 +473,7 @@ fun RecordContent(
                     onAction = { dispatch(CaptureIntent.Reset) },
                 )
                 else -> {
-                    if (lyricsLayer && boundSongId != null) {
+                    if (lyricsLayer) {
                         LiveLyricsStage(
                             lyrics = activeLyrics,
                             onEditSection = onEditLyricsSection,
@@ -458,8 +494,8 @@ fun RecordContent(
             }
         }
 
-        // Docked Piano Keyboard when Piano layer is active
-        val showPiano = pianoActive && (state is CaptureState.Ready || state is CaptureState.Recording || state is CaptureState.Paused || state is CaptureState.Reviewing)
+        // Docked Piano Keyboard when Piano layer is active (hidden while software keyboard is open)
+        val showPiano = !isImeVisible && pianoActive && (state is CaptureState.Ready || state is CaptureState.Recording || state is CaptureState.Paused || state is CaptureState.Reviewing)
         if (showPiano) {
             HorizontalDivider(color = c.divider, thickness = 1.dp)
             Column(
@@ -486,16 +522,20 @@ fun RecordContent(
             }
         }
 
-        // Bottom Transport (80.dp pulsing Record FAB when Ready; Floating Glass-Pill when Recording/Paused/Reviewing)
-        Transport(
-            state = state,
-            amplitudes = amplitudes,
-            reviewPeaks = reviewPeaks,
-            dispatch = dispatch,
-            onSave = {
-                dispatch(CaptureIntent.Save(takeName = "", newSongName = null))
-            },
-        )
+        // Bottom Transport (80.dp pulsing Record FAB when Ready; Floating Glass-Pill when Recording/Paused/Reviewing).
+        // Hide the idle 80.dp Record FAB while typing lyrics with the software keyboard open so the active section has full room.
+        val showTransport = !(compactForLyricsKeyboard && (state is CaptureState.Ready || state is CaptureState.PermissionDenied))
+        if (showTransport) {
+            Transport(
+                state = state,
+                amplitudes = amplitudes,
+                reviewPeaks = reviewPeaks,
+                dispatch = dispatch,
+                onSave = {
+                    dispatch(CaptureIntent.Save(takeName = "", newSongName = null))
+                },
+            )
+        }
     }
 
     val confirmDiscard = when (state) {
@@ -684,82 +724,214 @@ private fun LiveLyricsStage(
 ) {
     val c = SongPadTheme.colors
     val sorted = remember(lyrics) { lyrics?.sections?.sortedBy { it.sortOrder }.orEmpty() }
+    val scrollState = rememberScrollState()
+    val focusManager = LocalFocusManager.current
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = Spacing.screen, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        items(sorted, key = { it.id }) { sec ->
-            var text by remember(sec.id, sec.bodyText) { mutableStateOf(sec.bodyText) }
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = c.surface,
-                border = BorderStroke(1.dp, c.divider),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        TagChip(
-                            text = sec.displayLabel,
-                            tone = TagTone.Accent,
-                            onClick = { onRetagSection(sec) },
-                        )
-                        Surface(
-                            onClick = { onDeleteSection(sec.id) },
-                            shape = CircleShape,
-                            color = Color.Transparent,
-                            modifier = Modifier.size(26.dp),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Close, "Delete section", tint = c.textTertiary, modifier = Modifier.size(14.dp))
-                            }
-                        }
-                    }
-                    BasicTextField(
-                        value = text,
-                        onValueChange = { text = it; onEditSection(sec.id, it) },
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(
-                            color = c.text,
-                            fontSize = 14.sp,
-                            lineHeight = 21.sp,
-                        ),
-                        cursorBrush = SolidColor(c.accent),
-                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
-                        decorationBox = { inner ->
-                            Box(Modifier.fillMaxWidth()) {
-                                if (text.isEmpty()) {
-                                    Text(
-                                        text = "Write while you play…",
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                                        color = c.textTertiary,
-                                    )
-                                }
-                                inner()
-                            }
-                        },
-                    )
+    var focusedSectionId by remember { mutableStateOf<String?>(null) }
+    var lastReturnedSectionId by remember { mutableStateOf<String?>(null) }
+    var imeWasVisible by remember { mutableStateOf(false) }
+    var knownSectionIds by remember { mutableStateOf<Set<String>?>(null) }
+    var autoFocusSectionId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(isImeVisible) {
+        if (imeWasVisible && !isImeVisible) {
+            if (focusedSectionId != null) {
+                lastReturnedSectionId = focusedSectionId
+            }
+            focusedSectionId = null
+            focusManager.clearFocus()
+        }
+        imeWasVisible = isImeVisible
+    }
+
+    LaunchedEffect(sorted.map { it.id }) {
+        val currentIds = sorted.map { it.id }.toSet()
+        val prev = knownSectionIds
+        if (prev != null && currentIds.size > prev.size) {
+            val addedId = sorted.lastOrNull { it.id !in prev }?.id
+            if (addedId != null) {
+                focusedSectionId = addedId
+                autoFocusSectionId = addedId
+            }
+        }
+        knownSectionIds = currentIds
+    }
+
+    LaunchedEffect(focusedSectionId) {
+        if (focusedSectionId != null) {
+            scrollState.scrollTo(0)
+        } else {
+            val returnedId = lastReturnedSectionId
+            if (returnedId != null) {
+                lastReturnedSectionId = null
+                val canonicalIndex = sorted.indexOfFirst { it.id == returnedId }
+                if (canonicalIndex >= sorted.lastIndex && sorted.size > 1) {
+                    scrollState.animateScrollTo(scrollState.maxValue)
                 }
             }
         }
-        item {
-            Surface(
-                onClick = onAddSection,
-                shape = RoundedCornerShape(Radii.pill),
-                color = c.accent100,
-                contentColor = c.accent800,
-            ) {
-                Text(
-                    text = "+ Section",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 12.sp),
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                )
+    }
+
+    val displaySections = remember(sorted, focusedSectionId) {
+        val active = sorted.firstOrNull { it.id == focusedSectionId }
+        if (active != null) {
+            listOf(active) + sorted.filterNot { it.id == active.id }
+        } else {
+            sorted
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState, enabled = focusedSectionId == null)
+            .padding(horizontal = Spacing.screen, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        displaySections.forEach { sec ->
+            key(sec.id) {
+                val isLevitated = focusedSectionId == sec.id
+                val isDimmed = focusedSectionId != null && !isLevitated
+                var text by remember(sec.id) { mutableStateOf(sec.bodyText) }
+                LaunchedEffect(sec.bodyText) {
+                    if (!isLevitated && text != sec.bodyText) {
+                        text = sec.bodyText
+                    }
+                }
+                val focusRequester = remember { FocusRequester() }
+                LaunchedEffect(autoFocusSectionId == sec.id) {
+                    if (autoFocusSectionId == sec.id) {
+                        runCatching { focusRequester.requestFocus() }
+                        autoFocusSectionId = null
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = c.surface,
+                    border = BorderStroke(if (isLevitated) 1.5.dp else 1.dp, if (isLevitated) c.accent else c.divider),
+                    shadowElevation = if (isLevitated) 6.dp else 0.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .alpha(if (isDimmed) 0.45f else 1f),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                TagChip(
+                                    text = sec.displayLabel,
+                                    tone = TagTone.Accent,
+                                    onClick = { onRetagSection(sec) },
+                                )
+                                if (isLevitated) {
+                                    Text(
+                                        text = "ACTIVE",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.sp,
+                                            letterSpacing = 0.8.sp,
+                                        ),
+                                        color = c.accent,
+                                    )
+                                }
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                if (isLevitated) {
+                                    Surface(
+                                        onClick = {
+                                            lastReturnedSectionId = sec.id
+                                            focusedSectionId = null
+                                            focusManager.clearFocus()
+                                        },
+                                        shape = RoundedCornerShape(Radii.pill),
+                                        color = c.accent,
+                                        contentColor = c.onAccent,
+                                    ) {
+                                        Text(
+                                            text = "Done",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 11.sp,
+                                            ),
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    onClick = { onDeleteSection(sec.id) },
+                                    shape = CircleShape,
+                                    color = Color.Transparent,
+                                    modifier = Modifier.size(26.dp),
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Filled.Close, "Delete section", tint = c.textTertiary, modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                            }
+                        }
+                        BasicTextField(
+                            value = text,
+                            onValueChange = { text = it; onEditSection(sec.id, it) },
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = c.text,
+                                fontSize = 14.sp,
+                                lineHeight = 21.sp,
+                            ),
+                            cursorBrush = SolidColor(c.accent),
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                            minLines = if (isLevitated) 4 else 2,
+                            maxLines = if (isLevitated) 6 else Int.MAX_VALUE,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 42.dp)
+                                .focusRequester(focusRequester)
+                                .onFocusChanged { focusState ->
+                                    if (focusState.isFocused) {
+                                        focusedSectionId = sec.id
+                                    }
+                                },
+                            decorationBox = { inner ->
+                                Box(Modifier.fillMaxWidth()) {
+                                    if (text.isEmpty()) {
+                                        Text(
+                                            text = "Write while you play…",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                                            color = c.textTertiary,
+                                        )
+                                    }
+                                    inner()
+                                }
+                            },
+                        )
+                    }
+                }
             }
+        }
+        Surface(
+            onClick = {
+                focusManager.clearFocus()
+                focusedSectionId = null
+                onAddSection()
+            },
+            shape = RoundedCornerShape(Radii.pill),
+            color = c.accent100,
+            contentColor = c.accent800,
+        ) {
+            Text(
+                text = "+ Section",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 12.sp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            )
         }
     }
 }

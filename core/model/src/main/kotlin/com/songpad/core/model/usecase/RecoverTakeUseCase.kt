@@ -14,9 +14,11 @@ class RecoverTakeUseCase(
     private val transcodes: TranscodeScheduler,
     private val clock: Clock,
 ) {
-    /** §21.3 #3 final decision: named "Recovered take (Sep 25)", not a generic "Recovered recording". */
-    suspend fun keep(orphan: OrphanedTake): Result<Take> =
-        takes.recoverOrphan(orphan, "Recovered take (${recoveredOnLabel()})").onSuccess { transcodes.enqueue(it.id) }
+    /** §21.3 #3 final decision: named "Recovered take (Sep 25) 1", auto-incrementing to avoid confusion. */
+    suspend fun keep(orphan: OrphanedTake): Result<Take> {
+        val name = takes.nextDefaultNameForPrefix("Recovered take (${recoveredOnLabel()})")
+        return takes.recoverOrphan(orphan, name).onSuccess { transcodes.enqueue(it.id) }
+    }
 
     suspend fun discard(orphan: OrphanedTake): Result<Unit> = takes.hardDeleteOrphan(orphan.takeId)
 

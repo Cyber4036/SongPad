@@ -22,9 +22,14 @@ import com.songpad.core.model.take.QualityMode
 import com.songpad.core.model.take.TakeDraft
 import com.songpad.core.model.take.TakePaths
 import com.songpad.core.model.take.TakeType
+import com.songpad.core.audio.encode.PcmDecoder
+import com.songpad.core.model.export.ImportResult
+import com.songpad.core.model.id.IdGenerator
+import com.songpad.core.model.take.TakeFileStore
 import com.songpad.feature.export.bundle.ExportPlanner
 import com.songpad.feature.export.bundle.SongBundleManifest
 import com.songpad.feature.export.bundle.SongBundleWriter
+import com.songpad.feature.export.bundle.SongPadImporterImpl
 import com.songpad.feature.export.work.ExportJobRunner
 import com.songpad.feature.export.work.ExportJobStatus
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +49,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayOutputStream
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
@@ -75,7 +81,7 @@ class ExportTest {
     }
 
     @Test
-    fun `planner - summary states source formats honestly and mode drops the right parts`() = runTest {
+    fun `planner - summary states source formats honestly, resolves direct files vs zip bundles, and scopes single takes`() = runTest {
         val songId = seed()
         val detail = songs.observeSong(songId).first()!!
         val planner = ExportPlanner(resolver)
@@ -87,6 +93,8 @@ class ExportTest {
         assertThat(all.summary.midiCount).isEqualTo(1)
         assertThat(all.summary.sectionCount).isEqualTo(1)
         assertThat(all.summary.noteCount).isEqualTo(1)
+        assertThat(all.summary.outputMimeType).isEqualTo("application/zip")
+        assertThat(all.summary.outputFileName).endsWith(".zip")
         assertThat(all.takes.map { it.audioEntryPath }).containsExactly("audio/01 Verse idea.wav", "audio/02 Piano sketch.wav").inOrder()
         assertThat(all.takes[1].midiEntryPath).isEqualTo("midi/02 Piano sketch.mid")
 
@@ -94,14 +102,27 @@ class ExportTest {
         assertThat(stored.takes.map { it.audioEntryPath }).containsExactly("audio/01 Verse idea.m4a", "audio/02 Piano sketch.flac").inOrder()
         assertThat(stored.summary.sectionCount).isEqualTo(0)
         assertThat(stored.summary.midiCount).isEqualTo(0)
+        assertThat(stored.summary.outputMimeType).isEqualTo("application/zip")
 
+        // Single-take export produces a direct audio file (.wav, .mp3, .m4a) instead of a bundle archive
+        val singleWav = planner.plan(detail, ExportRequest(songId, ExportMode.AUDIO_TAKES, ExportAudioFormat.WAV, takeId = "t1"))
+        assertThat(singleWav.takes).hasSize(1)
+        assertThat(singleWav.summary.selectedTakeName).isEqualTo("Verse idea")
+        assertThat(singleWav.summary.outputMimeType).isEqualTo("audio/wav")
+        assertThat(singleWav.summary.outputFileName).endsWith(".wav")
+
+        // Lyrics-only export produces a direct .txt file with text/plain MIME type
         val lyricsOnly = planner.plan(detail, ExportRequest(songId, ExportMode.LYRICS_ONLY, ExportAudioFormat.STORED))
         assertThat(lyricsOnly.takes).isEmpty()
         assertThat(lyricsOnly.summary.sectionCount).isEqualTo(1)
+        assertThat(lyricsOnly.summary.outputMimeType).isEqualTo("text/plain")
+        assertThat(lyricsOnly.summary.outputFileName).endsWith(".txt")
 
         val manifest = planner.manifest(all, 1_700_000_000_000, "test")
         assertThat(manifest.schemaVersion).isEqualTo(SongBundleManifest.SCHEMA_VERSION)
         assertThat(manifest.takes.map { it.sourceFormat }).containsExactly("m4a", "flac").inOrder()
+        assertThat(manifest.sections.single().bodyText).isEqualTo("neon rain on the window")
+        assertThat(manifest.notes.single().bodyText).isEqualTo("Try @Chorus louder")
         val json = SongBundleManifest.json.encodeToString(SongBundleManifest.serializer(), manifest)
         assertThat(json).contains("\"schemaVersion\": 1")
         assertThat(SongBundleManifest.json.decodeFromString(SongBundleManifest.serializer(), json)).isEqualTo(manifest)
@@ -139,7 +160,126 @@ class ExportTest {
         val thrown = runCatching { SongBundleWriter().write(entries, aborted) { i, _, _, _ -> i < 1 } }.exceptionOrNull()
         assertThat(thrown).isInstanceOf(SongBundleWriter.AbortedException::class.java)
 
-        assertThat(SongBundleWriter.bundleFileName("Neon/Rain: v2", 0)).matches("Export_Neon_Rain_ v2_\\d{8}-\\d{4}\\.songpad")
+        assertThat(SongBundleWriter.bundleFileName("Neon/Rain: v2", 0)).matches("Export_Neon_Rain_ v2_\\d{8}-\\d{4}\\.zip")
+        assertThat(SongBundleWriter.lyricsFileName("Neon/Rain: v2", 0)).matches("Lyrics_Neon_Rain_ v2_\\d{8}-\\d{4}\\.txt")
+        assertThat(SongBundleWriter.singleTakeFileName("Neon Rain", "Verse 1", "mp3", 0)).matches("Neon Rain - Verse 1_\\d{8}-\\d{4}\\.mp3")
+    }
+
+    @Test
+    fun `importer - round-trip import of legacy songpad/bin bundle, standalone wav take, and txt lyrics`() = runTest {
+        val rootDir = tmp.newFolder("files")
+        val fileStore = TakeFileStore(rootDir)
+        var nextId = 100
+        val ids = IdGenerator { "id-${nextId++}" }
+        val importer = SongPadImporterImpl(
+            songs = songs,
+            takes = takes,
+            lyrics = lyrics,
+            notes = notes,
+            files = fileStore,
+            pcmDecoder = PcmDecoder(fileStore),
+            ids = ids,
+        )
+
+        // 1. Build a legacy .songpad.bin archive (where sections in song.json had no bodyText, only lyrics.txt + notes.txt + audio)
+        val fakeM4aBytes = ByteArray(4096) { (it % 127).toByte() }
+        val legacyManifestJson = """
+            {
+              "schemaVersion": 1,
+              "generator": "SongPad 0.1.0",
+              "exportedAtMillis": 1700000000000,
+              "mode": "EVERYTHING",
+              "song": {
+                "id": "orig-song",
+                "name": "Recovered Midnight",
+                "status": "ONGOING",
+                "favorite": true,
+                "createdAtMillis": 1700000000000,
+                "updatedAtMillis": 1700000000000
+              },
+              "takes": [
+                {
+                  "id": "orig-t1",
+                  "name": "Chorus vocal",
+                  "type": "VOICE",
+                  "durationMs": 8000,
+                  "createdAtMillis": 1700000000000,
+                  "sourceFormat": "m4a",
+                  "exportFormat": "m4a",
+                  "audioFile": "audio/01 Chorus vocal.m4a",
+                  "midiFile": null
+                }
+              ],
+              "sections": [
+                { "id": "s1", "tag": "VERSE", "label": "Verse 1", "sortOrder": 0 },
+                { "id": "s2", "tag": "CHORUS", "label": "Chorus", "sortOrder": 1 }
+              ],
+              "notes": [
+                { "id": "n1", "createdAtMillis": 1700000000000, "sectionRefId": null, "takeRefId": null }
+              ]
+            }
+        """.trimIndent()
+        val legacyLyricsTxt = "[Verse 1]\nWalking down the empty street\n\n[Chorus]\nSing it back to me"
+        val legacyNotesTxt = "[2023-11-14 22:13]\nCapo on 3rd fret"
+
+        val bundleBytes = ByteArrayOutputStream().also { out ->
+            SongBundleWriter().write(
+                listOf(
+                    SongBundleWriter.Entry.Text("song.json", legacyManifestJson),
+                    SongBundleWriter.Entry.Text("lyrics.txt", legacyLyricsTxt),
+                    SongBundleWriter.Entry.Text("notes.txt", legacyNotesTxt),
+                    SongBundleWriter.Entry.Streamed("audio/01 Chorus vocal.m4a") { o, p -> o.write(fakeM4aBytes); p(1f) },
+                ),
+                out,
+            ) { _, _, _, _ -> true }
+        }.toByteArray()
+
+        // Even if Android named the legacy export `.songpad.bin` with application/octet-stream, importer restores it!
+        val bundleRes = importer.importFromStream(
+            displayName = "Export_Recovered Midnight_20250101-1200.songpad.bin",
+            mimeType = "application/octet-stream",
+            targetSongId = null,
+            openStream = { ByteArrayInputStream(bundleBytes) },
+        ).getOrThrow() as ImportResult.SongBundleImported
+
+        assertThat(bundleRes.songName).isEqualTo("Recovered Midnight")
+        assertThat(bundleRes.takeCount).isEqualTo(1)
+        assertThat(bundleRes.sectionCount).isEqualTo(2)
+        assertThat(bundleRes.noteCount).isEqualTo(1)
+
+        val importedDetail = songs.observeSong(bundleRes.songId).first()!!
+        assertThat(importedDetail.takes.single().name).isEqualTo("Chorus vocal")
+        assertThat(importedDetail.lyrics!!.sections.map { it.bodyText })
+            .containsExactly("Walking down the empty street", "Sing it back to me").inOrder()
+        assertThat(importedDetail.notes.single().bodyText).isEqualTo("Capo on 3rd fret")
+
+        // 2. Import standalone .txt lyrics into the imported song
+        val extraLyrics = "[Bridge]\nHold the line until dawn"
+        val lyricsRes = importer.importFromStream(
+            displayName = "Bridge idea.txt",
+            mimeType = "text/plain",
+            targetSongId = bundleRes.songId,
+            openStream = { ByteArrayInputStream(extraLyrics.toByteArray()) },
+        ).getOrThrow() as ImportResult.LyricsImported
+        assertThat(lyricsRes.sectionCount).isEqualTo(1)
+        assertThat(songs.observeSong(bundleRes.songId).first()!!.lyrics!!.sections.map { it.bodyText })
+            .contains("Hold the line until dawn")
+
+        // 3. Import standalone .wav audio into the imported song
+        val wavOut = ByteArrayOutputStream()
+        com.songpad.core.audio.encode.WavEncoder().use { enc ->
+            val pcmFile = tmp.newFile("sample.pcm").apply { writeBytes(ByteArray(9600)) } // 100ms @ 48kHz mono s16le
+            enc.encode(pcmFile, 48_000, wavOut) {}
+        }
+        val wavRes = importer.importFromStream(
+            displayName = "Guitar Hook.wav",
+            mimeType = "audio/wav",
+            targetSongId = bundleRes.songId,
+            openStream = { ByteArrayInputStream(wavOut.toByteArray()) },
+        ).getOrThrow() as ImportResult.TakeImported
+        assertThat(wavRes.takeName).isEqualTo("Guitar Hook")
+        assertThat(songs.observeSong(bundleRes.songId).first()!!.takes.map { it.name })
+            .contains("Guitar Hook")
     }
 
     private class ScriptedRunner(val statuses: List<ExportJobStatus>) : ExportJobRunner {
@@ -151,7 +291,7 @@ class ExportTest {
     @Test
     fun `view model - selecting, preparing with progress, success, and the nothing-to-export guard`() = runTest(dispatcher) {
         val songId = seed()
-        val runner = ScriptedRunner(listOf(ExportJobStatus.Queued, ExportJobStatus.Running(0.5f, "01 Verse idea.m4a"), ExportJobStatus.Done("/tmp/x.songpad", "x.songpad", 12345)))
+        val runner = ScriptedRunner(listOf(ExportJobStatus.Queued, ExportJobStatus.Running(0.5f, "01 Verse idea.m4a"), ExportJobStatus.Done("/tmp/x.zip", "x.zip", 12345, "application/zip")))
         val vm = ExportViewModel(songs, resolver, settings, runner, Logger.Noop)
         vm.bind(songId); advanceUntilIdle()
         val selecting = vm.state.value as ExportState.Selecting
@@ -164,8 +304,9 @@ class ExportTest {
 
         vm.start(); advanceUntilIdle()
         val success = vm.state.value as ExportState.Success
-        assertThat(success.bundleName).isEqualTo("x.songpad")
-        assertThat(vm.bundlePath).isEqualTo("/tmp/x.songpad")
+        assertThat(success.bundleName).isEqualTo("x.zip")
+        assertThat(success.mimeType).isEqualTo("application/zip")
+        assertThat(vm.bundlePath).isEqualTo("/tmp/x.zip")
 
         vm.reset(); advanceUntilIdle()
         assertThat((vm.state.value as ExportState.Selecting).request.audioFormat).isEqualTo(ExportAudioFormat.WAV)

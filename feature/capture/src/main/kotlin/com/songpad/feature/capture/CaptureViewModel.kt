@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -77,14 +78,22 @@ class CaptureViewModel @Inject constructor(
     private val _boundSongId = MutableStateFlow<String?>(null)
     val boundSongId: StateFlow<String?> = _boundSongId.asStateFlow()
 
+    private val _standaloneLyricsDocId = MutableStateFlow<String?>(null)
+    val standaloneLyricsDocId: StateFlow<String?> = _standaloneLyricsDocId.asStateFlow()
+
     val activeSongName: StateFlow<String?> = _boundSongId.flatMapLatest { id ->
         if (id == null) flowOf(null)
         else songs.observeSong(id).map { it?.song?.name }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    val activeLyrics: StateFlow<LyricsDocument?> = _boundSongId.flatMapLatest { id ->
-        if (id == null) flowOf(null)
-        else lyricsRepo.observeDocument(id)
+    val activeLyrics: StateFlow<LyricsDocument?> = combine(_boundSongId, _standaloneLyricsDocId) { songId, docId ->
+        songId to docId
+    }.flatMapLatest { (songId, docId) ->
+        when {
+            songId != null -> lyricsRepo.observeDocument(songId)
+            docId != null -> lyricsRepo.observeDocumentById(docId)
+            else -> flowOf(null)
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val availableSongs: StateFlow<List<Song>> = songs.observeSongs(SongFilter.ALL)
@@ -164,10 +173,35 @@ class CaptureViewModel @Inject constructor(
         }
     }
 
-    /** Binds a song chosen from the "Which song?" picker when toggling the Lyrics layer on a loose idea. */
+    /** Ensures an independent standalone LyricsDocument ("Lyric N") exists when writing lyrics without a song. */
+    fun ensureStandaloneLyricsForCapture() {
+        if (_boundSongId.value != null || _standaloneLyricsDocId.value != null) return
+        viewModelScope.launch {
+            if (_boundSongId.value == null && _standaloneLyricsDocId.value == null) {
+                lyricsRepo.createStandalone().onSuccess { doc ->
+                    _standaloneLyricsDocId.value = doc.id
+                }
+            }
+        }
+    }
+
+    /** Binds a song if the user optionally chooses to attach the capture session to a song. */
     fun selectSongForCapture(songId: String) {
+        val standaloneId = _standaloneLyricsDocId.value
         initialSongId = songId
         _boundSongId.value = songId
+        _standaloneLyricsDocId.value = null
+        if (standaloneId != null) {
+            viewModelScope.launch {
+                flushPendingLyricsEdit()
+                val doc = lyricsRepo.getDocumentById(standaloneId)
+                if (doc != null && doc.hasNonEmptyText) {
+                    lyricsRepo.assignToSong(standaloneId, songId)
+                } else {
+                    lyricsRepo.deleteDocument(standaloneId)
+                }
+            }
+        }
         store.reduce { s ->
             when (s) {
                 is CaptureState.Ready -> s.copy(songId = songId)
@@ -180,11 +214,13 @@ class CaptureViewModel @Inject constructor(
     }
 
     fun createSongForCapture(name: String, onCreated: (String) -> Unit = {}) {
-        val repo = songs ?: return
         viewModelScope.launch {
-            repo.create(name.trim()).onSuccess { song ->
+            songs.create(name.trim()).onSuccess { song ->
                 selectSongForCapture(song.id)
-                lyricsRepo?.insertSection(song.id, SectionTag.VERSE, null, null)
+                val existingDoc = lyricsRepo.observeDocument(song.id).first()
+                if (existingDoc == null || existingDoc.sections.isEmpty()) {
+                    lyricsRepo.insertSection(song.id, SectionTag.VERSE, null, null)
+                }
                 onCreated(song.id)
             }
         }
@@ -192,35 +228,80 @@ class CaptureViewModel @Inject constructor(
 
     // ── Live Lyrics Layer actions on RecordScreen ──
     private var lyricsAutosaveJob: Job? = null
+    private var pendingLyricsEdit: Pair<String, String>? = null
 
     fun editLyricsSection(sectionId: String, text: String) {
-        val repo = lyricsRepo ?: return
+        lyricsRepo.saveSectionDraft(sectionId, text)
+        pendingLyricsEdit = sectionId to text
         lyricsAutosaveJob?.cancel()
         lyricsAutosaveJob = viewModelScope.launch {
             delay(350L)
-            repo.updateSectionText(sectionId, text)
+            lyricsRepo.updateSectionText(sectionId, text)
+            if (pendingLyricsEdit?.first == sectionId) pendingLyricsEdit = null
+        }
+    }
+
+    fun flushLyricsDrafts() {
+        viewModelScope.launch {
+            flushPendingLyricsEdit()
+        }
+    }
+
+    private suspend fun flushPendingLyricsEdit() {
+        lyricsAutosaveJob?.cancel()
+        lyricsAutosaveJob = null
+        val pending = pendingLyricsEdit
+        if (pending != null) {
+            pendingLyricsEdit = null
+            lyricsRepo.updateSectionText(pending.first, pending.second)
+        }
+        lyricsRepo.flushDrafts()
+    }
+
+    /** Flushes any in-flight lyric keystrokes and cleans up empty standalone lyric documents on close. */
+    fun finishStandaloneLyricsSession(onFinished: () -> Unit = {}) {
+        viewModelScope.launch {
+            flushPendingLyricsEdit()
+            val docId = _standaloneLyricsDocId.value
+            if (docId != null) {
+                val doc = lyricsRepo.getDocumentById(docId)
+                if (doc != null && !doc.hasNonEmptyText) {
+                    lyricsRepo.deleteDocument(docId)
+                    _standaloneLyricsDocId.value = null
+                }
+            }
+            onFinished()
         }
     }
 
     fun insertLyricsSection(tag: SectionTag = SectionTag.VERSE, customLabel: String? = null) {
-        val id = _boundSongId.value ?: return
-        val repo = lyricsRepo ?: return
+        val songId = _boundSongId.value
+        val docId = _standaloneLyricsDocId.value
         viewModelScope.launch {
-            repo.insertSection(id, tag, customLabel, null)
+            when {
+                songId != null -> lyricsRepo.insertSection(songId, tag, customLabel, null)
+                docId != null -> lyricsRepo.insertSectionInDocument(docId, tag, customLabel, null)
+                else -> {
+                    lyricsRepo.createStandalone().onSuccess { doc ->
+                        _standaloneLyricsDocId.value = doc.id
+                        if (tag != SectionTag.VERSE || customLabel != null) {
+                            lyricsRepo.insertSectionInDocument(doc.id, tag, customLabel, null)
+                        }
+                    }
+                }
+            }
         }
     }
 
     fun retagLyricsSection(sectionId: String, tag: SectionTag, customLabel: String? = null) {
-        val repo = lyricsRepo ?: return
         viewModelScope.launch {
-            repo.updateSectionTag(sectionId, tag, customLabel)
+            lyricsRepo.updateSectionTag(sectionId, tag, customLabel)
         }
     }
 
     fun deleteLyricsSection(sectionId: String) {
-        val repo = lyricsRepo ?: return
         viewModelScope.launch {
-            repo.deleteSection(sectionId)
+            lyricsRepo.deleteSection(sectionId)
         }
     }
 
@@ -397,6 +478,7 @@ class CaptureViewModel @Inject constructor(
             else -> return
         }
         if (playback.state.value.sourceOrNull?.takeId == session.takeId) playback.stop()
+        flushPendingLyricsEdit()
         val resolvedSession = if (session.songId == null && _boundSongId.value != null) {
             session.copy(songId = _boundSongId.value)
         } else {
@@ -405,6 +487,19 @@ class CaptureViewModel @Inject constructor(
         reduce { CaptureState.Saving(resolvedSession) }
         finalizeTake(resolvedSession, takeName, newSongName)
             .onSuccess { take ->
+                val standaloneId = _standaloneLyricsDocId.value
+                if (standaloneId != null) {
+                    val doc = lyricsRepo.getDocumentById(standaloneId)
+                    if (doc != null) {
+                        if (!doc.hasNonEmptyText) {
+                            lyricsRepo.deleteDocument(standaloneId)
+                            _standaloneLyricsDocId.value = null
+                        } else if (take.songId != null) {
+                            lyricsRepo.assignToSong(standaloneId, take.songId!!)
+                            _standaloneLyricsDocId.value = null
+                        }
+                    }
+                }
                 reduce { CaptureState.Saved(take) }
                 val targetSongId = take.songId
                 if (targetSongId != null) {

@@ -3,6 +3,7 @@ package com.songpad.core.data.testing
 import com.songpad.core.model.data.SongRepository
 import com.songpad.core.model.error.DataError
 import com.songpad.core.model.error.domainFailure
+import com.songpad.core.model.lyrics.withDrafts
 import com.songpad.core.model.song.Song
 import com.songpad.core.model.song.SongDetail
 import com.songpad.core.model.song.SongFilter
@@ -27,12 +28,12 @@ class FakeSongRepository(val store: InMemoryStore = InMemoryStore()) : SongRepos
     }
 
     override fun observeSong(songId: String): Flow<SongDetail?> =
-        combine(store.songs, store.takes, store.documents, store.notes) { songs, takes, docs, notes ->
+        combine(store.songs, store.takes, store.documents, store.sectionDrafts, store.notes) { songs, takes, docs, drafts, notes ->
             val song = songs[songId]?.takeIf { !it.meta.deleted } ?: return@combine null
             SongDetail(
                 song = song,
                 takes = takes.values.filter { it.songId == songId && !it.meta.deleted }.sortedByDescending { it.meta.createdAt },
-                lyrics = docs[songId],
+                lyrics = docs[songId]?.withDrafts(drafts),
                 notes = notes.values.filter { it.songId == songId && !it.meta.deleted }.sortedByDescending { it.meta.createdAt },
             )
         }

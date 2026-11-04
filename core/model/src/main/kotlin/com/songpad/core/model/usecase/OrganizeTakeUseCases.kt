@@ -34,3 +34,32 @@ class RenameTakeUseCase(private val takes: TakeRepository) {
         return takes.rename(takeId, trimmed)
     }
 }
+
+/** Creates a new Song and assigns the standalone [documentId] lyrics to it. */
+class CreateSongFromLyricsUseCase(
+    private val songs: SongRepository,
+    private val lyrics: com.songpad.core.model.data.LyricsRepository,
+) {
+    suspend operator fun invoke(name: String, documentId: String): Result<Song> {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return domainFailure(DataError.InvalidInput("Give the song a name."))
+        if (trimmed.length > CreateSongFromTakeUseCase.MAX_NAME) {
+            return domainFailure(DataError.InvalidInput("Song names are limited to ${CreateSongFromTakeUseCase.MAX_NAME} characters."))
+        }
+        if (songs.nameExists(trimmed)) return domainFailure(DataError.InvalidInput("A song with that name already exists."))
+        val song = songs.create(trimmed, adoptTakeId = null).getOrElse { return Result.failure(it) }
+        lyrics.assignToSong(documentId, song.id).getOrElse { return Result.failure(it) }
+        return Result.success(song)
+    }
+}
+
+/** Assigns or merges a standalone [documentId] lyrics document into an existing [songId]. */
+class AssignLyricsToSongUseCase(
+    private val lyrics: com.songpad.core.model.data.LyricsRepository,
+    private val songs: SongRepository,
+) {
+    suspend operator fun invoke(documentId: String, songId: String): Result<Unit> {
+        songs.getSong(songId) ?: return domainFailure(DataError.NotFound("Song", songId))
+        return lyrics.assignToSong(documentId, songId)
+    }
+}

@@ -6,6 +6,7 @@ import com.songpad.core.audio.recovery.AudioRecoveryManager
 import com.songpad.core.model.audio.PlaybackController
 import com.songpad.core.model.audio.PlaybackSource
 import com.songpad.core.model.audio.PlaybackState
+import com.songpad.core.model.data.LyricsRepository
 import com.songpad.core.model.data.SearchEngine
 import com.songpad.core.model.data.SearchResults
 import com.songpad.core.model.data.SettingsRepository
@@ -13,14 +14,20 @@ import com.songpad.core.model.data.SongRepository
 import com.songpad.core.model.data.TakeRepository
 import com.songpad.core.model.error.DomainError
 import com.songpad.core.model.error.domainError
+import com.songpad.core.model.export.ImportResult
+import com.songpad.core.model.export.SongPadImporter
 import com.songpad.core.model.logging.Logger
+import com.songpad.core.model.lyrics.LyricsDocument
+import com.songpad.core.model.lyrics.SectionTag
 import com.songpad.core.model.song.Song
 import com.songpad.core.model.song.SongFilter
 import com.songpad.core.model.song.SongStatusTransitions
 import com.songpad.core.model.state.QualityDisclosureState
 import com.songpad.core.model.take.QualityMode
 import com.songpad.core.model.take.Take
+import com.songpad.core.model.usecase.AssignLyricsToSongUseCase
 import com.songpad.core.model.usecase.AssignTakeToSongUseCase
+import com.songpad.core.model.usecase.CreateSongFromLyricsUseCase
 import com.songpad.core.model.usecase.CreateSongFromTakeUseCase
 import com.songpad.core.model.usecase.RecoverTakeUseCase
 import com.songpad.feature.song.detail.NowPlaying
@@ -29,6 +36,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -46,6 +56,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.InputStream
 import javax.inject.Inject
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
@@ -62,6 +73,10 @@ class LibraryViewModel @Inject constructor(
     private val peaksLoader: PeaksLoader,
     private val logger: Logger,
     private val searchEngine: SearchEngine,
+    private val lyrics: LyricsRepository,
+    private val createSongFromLyrics: CreateSongFromLyricsUseCase,
+    private val assignLyricsToSong: AssignLyricsToSongUseCase,
+    private val importer: SongPadImporter? = null,
 ) : ViewModel() {
 
     private val filter = MutableStateFlow(SongFilter.ALL)
@@ -97,20 +112,29 @@ class LibraryViewModel @Inject constructor(
 
     val state: StateFlow<LibraryState> = combine(
         combine(
-            filter.flatMapLatest { f -> combine(songs.observeSongs(f), takes.observeUnassigned()) { s, t -> Triple(f, s, t) } },
+            filter.flatMapLatest { f ->
+                combine(songs.observeSongs(f), takes.observeUnassigned(), lyrics.observeUnassigned()) { s, t, l ->
+                    FilterSlice(f, s, t, l)
+                }
+            },
             playback.state, peaksVersion,
-        ) { (f, s, t), p, _ -> Quad(f, s, t, p) },
+        ) { slice, p, _ -> slice to p },
         disclosure,
-    ) { (f, songList, unassigned, p), disc ->
-        val nowPlaying = nowPlayingFrom(unassigned, p)
+    ) { (slice, p), disc ->
+        val nowPlaying = nowPlayingFrom(slice.unassignedTakes, p)
         when {
-            f != SongFilter.ALL -> LibraryState.Filtered(f, songList, unassigned, disc, nowPlaying)
-            songList.isEmpty() && unassigned.isEmpty() -> LibraryState.EmptyLibrary(disc)
-            else -> LibraryState.Populated(songList, unassigned, disc, nowPlaying)
+            slice.filter != SongFilter.ALL -> LibraryState.Filtered(slice.filter, slice.songs, slice.unassignedTakes, disc, nowPlaying, slice.unassignedLyrics)
+            slice.songs.isEmpty() && slice.unassignedTakes.isEmpty() && slice.unassignedLyrics.isEmpty() -> LibraryState.EmptyLibrary(disc)
+            else -> LibraryState.Populated(slice.songs, slice.unassignedTakes, disc, nowPlaying, slice.unassignedLyrics)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryState.Loading())
 
-    private data class Quad(val filter: SongFilter, val songs: List<Song>, val unassigned: List<Take>, val playback: PlaybackState)
+    private data class FilterSlice(
+        val filter: SongFilter,
+        val songs: List<Song>,
+        val unassignedTakes: List<Take>,
+        val unassignedLyrics: List<LyricsDocument>,
+    )
 
     fun setFilter(f: SongFilter) { filter.value = f }
     fun setSearchQuery(q: String) { _searchQuery.value = q }
@@ -202,7 +226,10 @@ class LibraryViewModel @Inject constructor(
 
     fun openNewSongForTake(take: Take) { _sheet.value = LibrarySheet.NewSongForTake(take) }
     fun requestDeleteTake(take: Take) { _sheet.value = LibrarySheet.ConfirmDeleteTake(take) }
-    fun closeSheet() { _sheet.value = LibrarySheet.None }
+    fun closeSheet() {
+        flushStandaloneLyricsEdits()
+        _sheet.value = LibrarySheet.None
+    }
 
     fun assignTake(takeId: String, songId: String) = viewModelScope.launch {
         stopIfPlaying(takeId)
@@ -218,6 +245,101 @@ class LibraryViewModel @Inject constructor(
     fun deleteTake(takeId: String) = viewModelScope.launch { stopIfPlaying(takeId); takes.softDelete(takeId).report(); closeSheet() }
 
     private fun stopIfPlaying(takeId: String) { if (playback.state.value.sourceOrNull?.takeId == takeId) playback.stop() }
+
+    // ── Unassigned standalone lyrics sheet & editor actions ──
+    private var standaloneLyricsAutosaveJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            lyrics?.flushDrafts()
+        }
+    }
+
+    fun observeStandaloneLyrics(documentId: String): Flow<LyricsDocument?> =
+        lyrics?.observeDocumentById(documentId) ?: flowOf(null)
+
+    fun openStandaloneLyrics(documentId: String) {
+        _sheet.value = LibrarySheet.EditStandaloneLyrics(documentId)
+    }
+
+    fun openAssignLyricsSheet(doc: LyricsDocument) = viewModelScope.launch {
+        lyrics?.flushDrafts()
+        val candidates = songs.observeSongs(SongFilter.ALL).first()
+        _sheet.value = LibrarySheet.AssignLyrics(doc, candidates)
+    }
+
+    fun openNewSongForLyrics(doc: LyricsDocument) {
+        flushStandaloneLyricsEdits()
+        _sheet.value = LibrarySheet.NewSongForLyrics(doc)
+    }
+
+    fun openRenameStandaloneLyrics(doc: LyricsDocument) {
+        flushStandaloneLyricsEdits()
+        _sheet.value = LibrarySheet.RenameStandaloneLyrics(doc)
+    }
+
+    fun requestDeleteStandaloneLyrics(doc: LyricsDocument) {
+        _sheet.value = LibrarySheet.ConfirmDeleteStandaloneLyrics(doc)
+    }
+
+    fun assignLyrics(documentId: String, songId: String) = viewModelScope.launch {
+        lyrics?.flushDrafts()
+        assignLyricsToSong?.invoke(documentId, songId)?.report()
+        closeSheet()
+    }
+
+    fun createSongForLyrics(name: String, documentId: String, onCreated: (String) -> Unit = {}) = viewModelScope.launch {
+        lyrics?.flushDrafts()
+        createSongFromLyrics?.invoke(name, documentId)?.report()?.onSuccess { onCreated(it.id) }
+        closeSheet()
+    }
+
+    fun renameStandaloneLyrics(documentId: String, name: String) = viewModelScope.launch {
+        lyrics?.renameDocument(documentId, name.trim())?.report()
+        _sheet.value = LibrarySheet.EditStandaloneLyrics(documentId)
+    }
+
+    fun deleteStandaloneLyrics(documentId: String) = viewModelScope.launch {
+        lyrics?.deleteDocument(documentId)?.report()
+        closeSheet()
+    }
+
+    /**
+     * Immediately persists [text] to local draft state on every keystroke so no lyrics are lost if
+     * the app process is interrupted, then commits to the database after a brief debounce.
+     */
+    fun editStandaloneSection(sectionId: String, text: String) {
+        val repo = lyrics ?: return
+        repo.saveSectionDraft(sectionId, text)
+        standaloneLyricsAutosaveJob?.cancel()
+        standaloneLyricsAutosaveJob = viewModelScope.launch {
+            delay(250L)
+            repo.updateSectionText(sectionId, text).report()
+        }
+    }
+
+    fun flushStandaloneLyricsEdits() {
+        val repo = lyrics ?: return
+        standaloneLyricsAutosaveJob?.cancel()
+        standaloneLyricsAutosaveJob = null
+        viewModelScope.launch {
+            repo.flushDrafts().report()
+        }
+    }
+
+    fun insertStandaloneSection(documentId: String, tag: SectionTag = SectionTag.VERSE, customLabel: String? = null) = viewModelScope.launch {
+        lyrics?.flushDrafts()
+        lyrics?.insertSectionInDocument(documentId, tag, customLabel, null)?.report()
+    }
+
+    fun retagStandaloneSection(sectionId: String, tag: SectionTag, customLabel: String? = null) = viewModelScope.launch {
+        lyrics?.flushDrafts()
+        lyrics?.updateSectionTag(sectionId, tag, customLabel)?.report()
+    }
+
+    fun deleteStandaloneSection(sectionId: String) = viewModelScope.launch {
+        lyrics?.deleteSection(sectionId)?.report()
+    }
 
     // ── recovery banner (§9.4 step 5) ──
 
@@ -251,6 +373,51 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun dismissRecovered() { recoveryManager.clear() }
+
+    // ── Import (bundles, standalone audio takes, .txt lyrics) ──
+    fun openImportSheet() {
+        _sheet.value = LibrarySheet.Import()
+    }
+
+    fun importFile(displayName: String, mimeType: String?, openStream: () -> InputStream?) = viewModelScope.launch {
+        val imp = importer ?: return@launch
+        _sheet.value = LibrarySheet.Import(isBusy = true, statusTitle = "Importing…", statusBody = displayName)
+        val result = imp.importFromStream(displayName = displayName, mimeType = mimeType, targetSongId = null, openStream = openStream)
+        result.fold(
+            onSuccess = { imported ->
+                _sheet.value = when (imported) {
+                    is ImportResult.SongBundleImported -> LibrarySheet.Import(
+                        isBusy = false,
+                        statusTitle = "Imported \"${imported.songName}\"",
+                        statusBody = buildString {
+                            append("${imported.takeCount} take${if (imported.takeCount == 1) "" else "s"}")
+                            if (imported.sectionCount > 0) append(" · ${imported.sectionCount} lyric section${if (imported.sectionCount == 1) "" else "s"}")
+                            if (imported.noteCount > 0) append(" · ${imported.noteCount} note${if (imported.noteCount == 1) "" else "s"}")
+                        },
+                        importedSongId = imported.songId,
+                    )
+                    is ImportResult.TakeImported -> LibrarySheet.Import(
+                        isBusy = false,
+                        statusTitle = "Imported take \"${imported.takeName}\"",
+                        statusBody = "Saved to Unfiled takes at the top of your library.",
+                    )
+                    is ImportResult.LyricsImported -> LibrarySheet.Import(
+                        isBusy = false,
+                        statusTitle = "Imported lyrics \"${imported.documentName}\"",
+                        statusBody = "${imported.sectionCount} section${if (imported.sectionCount == 1) "" else "s"} saved to Unfiled lyrics.",
+                    )
+                }
+            },
+            onFailure = { err ->
+                _sheet.value = LibrarySheet.Import(
+                    isBusy = false,
+                    statusTitle = "Import failed",
+                    statusBody = err.message ?: "Could not read \"$displayName\".",
+                    isError = true,
+                )
+            },
+        )
+    }
 
     private fun <T> Result<T>.report(): Result<T> = onFailure { t -> t.domainError.let { logger.error(TAG, it); _errors.tryEmit(it) } }
 

@@ -31,8 +31,14 @@ class ExportPlanner(private val resolver: ExportSourceResolver) {
 
     suspend fun plan(detail: SongDetail, request: ExportRequest): Plan {
         val includeAudio = request.mode != ExportMode.LYRICS_ONLY
-        val includeText = request.mode != ExportMode.AUDIO_TAKES
-        val exportable = if (includeAudio) detail.takes.filter { it.isPlayable && it.audio != null }.sortedBy { it.meta.createdAt } else emptyList()
+        val includeText = request.mode != ExportMode.AUDIO_TAKES && request.takeId == null
+        val exportable = if (includeAudio) {
+            detail.takes
+                .filter { it.isPlayable && it.audio != null && (request.takeId == null || it.id == request.takeId) }
+                .sortedBy { it.meta.createdAt }
+        } else {
+            emptyList()
+        }
         val planned = exportable.mapIndexedNotNull { i, take ->
             val source = resolver.resolve(take.id).getOrNull() ?: return@mapIndexedNotNull null
             val ext = extensionFor(request.audioFormat, source)
@@ -45,6 +51,30 @@ class ExportPlanner(private val resolver: ExportSourceResolver) {
         }
         val sections = if (includeText) detail.lyrics?.sections.orEmpty() else emptyList()
         val notes = if (includeText) detail.notes else emptyList()
+
+        val isDirectLyrics = request.mode == ExportMode.LYRICS_ONLY
+        val isDirectSingleAudio = !isDirectLyrics &&
+            (request.takeId != null || (request.mode == ExportMode.AUDIO_TAKES && planned.size == 1 && planned[0].midiEntryPath == null)) &&
+            planned.size == 1
+
+        val (outputFileName, outputMime) = when {
+            isDirectLyrics -> SongBundleWriter.lyricsFileName(detail.song.name) to "text/plain"
+            isDirectSingleAudio -> {
+                val single = planned[0]
+                val ext = extensionFor(request.audioFormat, single.source)
+                SongBundleWriter.singleTakeFileName(detail.song.name, single.take.name, ext) to mimeTypeForExtension(ext)
+            }
+            else -> SongBundleWriter.bundleFileName(detail.song.name, System.currentTimeMillis()) to "application/zip"
+        }
+
+        val estimatedBytes = when {
+            isDirectLyrics -> (sections.sumOf { it.bodyText.length.toLong() + 24L } + notes.sumOf { it.bodyText.length.toLong() + 32L }).coerceAtLeast(128L)
+            isDirectSingleAudio -> estimateBytes(request.audioFormat, planned[0].source)
+            else -> planned.sumOf { estimateBytes(request.audioFormat, it.source) } + planned.sumOf { it.take.midi?.byteSize ?: 0L } +
+                sections.sumOf { it.bodyText.length.toLong() } + notes.sumOf { it.bodyText.length.toLong() } + 2_048
+        }
+
+        val selectedTakeName = request.takeId?.let { id -> detail.takes.firstOrNull { it.id == id }?.name }
         val summary = ExportSummary(
             songName = detail.song.name,
             takeCount = planned.size,
@@ -52,8 +82,10 @@ class ExportPlanner(private val resolver: ExportSourceResolver) {
             sectionCount = sections.size,
             noteCount = notes.size,
             losslessTakeCount = planned.count { it.source.isLossless },
-            estimatedBytes = planned.sumOf { estimateBytes(request.audioFormat, it.source) } + planned.sumOf { it.take.midi?.byteSize ?: 0L } +
-                sections.sumOf { it.bodyText.length.toLong() } + notes.sumOf { it.bodyText.length.toLong() } + 2_048,
+            estimatedBytes = estimatedBytes,
+            outputFileName = outputFileName,
+            outputMimeType = outputMime,
+            selectedTakeName = selectedTakeName,
         )
         return Plan(request, detail, planned, includeText, summary)
     }
@@ -70,8 +102,25 @@ class ExportPlanner(private val resolver: ExportSourceResolver) {
                 exportFormat = extensionFor(plan.request.audioFormat, p.source), midiFile = p.midiEntryPath,
             )
         },
-        sections = if (plan.includeText) plan.detail.lyrics?.sections.orEmpty().sortedBy { it.sortOrder }.map { SongBundleManifest.SectionInfo(it.id, it.displayLabel, it.tag.name, it.sortOrder) } else emptyList(),
-        notes = if (plan.includeText) plan.detail.notes.map { SongBundleManifest.NoteInfo(it.id, it.meta.createdAt, it.sectionRefId, it.takeRefId) } else emptyList(),
+        sections = if (plan.includeText) plan.detail.lyrics?.sections.orEmpty().sortedBy { it.sortOrder }.map {
+            SongBundleManifest.SectionInfo(
+                id = it.id,
+                label = it.displayLabel,
+                tag = it.tag.name,
+                sortOrder = it.sortOrder,
+                bodyText = it.bodyText,
+                customLabel = it.customLabel,
+            )
+        } else emptyList(),
+        notes = if (plan.includeText) plan.detail.notes.map {
+            SongBundleManifest.NoteInfo(
+                id = it.id,
+                createdAtMillis = it.meta.createdAt,
+                sectionRefId = it.sectionRefId,
+                takeRefId = it.takeRefId,
+                bodyText = it.bodyText,
+            )
+        } else emptyList(),
     )
 
     /** `lyrics.txt`: sections in sort order, human readable (§12.1). */
@@ -83,22 +132,55 @@ class ExportPlanner(private val resolver: ExportSourceResolver) {
         return plan.detail.notes.sortedBy { it.meta.createdAt }.joinToString("\n\n") { n -> "[${fmt.format(Date(n.meta.createdAt))}]\n${n.bodyText}" }
     }
 
+    /** Standalone `.txt` file content for `ExportMode.LYRICS_ONLY` so users get a readable text document. */
+    fun standaloneLyricsDocumentText(plan: Plan): String = buildString {
+        val lyrics = lyricsText(plan).trim()
+        val notes = notesText(plan).trim()
+        if (lyrics.isNotEmpty()) {
+            append(lyrics)
+        }
+        if (notes.isNotEmpty()) {
+            if (isNotEmpty()) append("\n\n--- Notes ---\n\n")
+            append(notes)
+        }
+    }
+
     companion object {
         fun extensionFor(format: ExportAudioFormat, source: ExportSource): String = when (format) {
-            ExportAudioFormat.STORED -> when (source.mimeType) { AudioFormat.MIME_FLAC -> "flac"; AudioFormat.MIME_M4A -> "m4a"; else -> "wav" }
+            ExportAudioFormat.STORED -> when (source.mimeType) {
+                AudioFormat.MIME_FLAC -> "flac"
+                AudioFormat.MIME_M4A -> "m4a"
+                AudioFormat.MIME_MP3 -> "mp3"
+                AudioFormat.MIME_WAV -> "wav"
+                else -> "wav"
+            }
             ExportAudioFormat.WAV -> "wav"
             ExportAudioFormat.MP3 -> "mp3"
         }
 
+        fun mimeTypeForExtension(ext: String): String = when (ext.lowercase(Locale.US)) {
+            "flac" -> AudioFormat.MIME_FLAC
+            "m4a" -> AudioFormat.MIME_M4A
+            "mp3" -> AudioFormat.MIME_MP3
+            "wav" -> AudioFormat.MIME_WAV
+            "txt" -> "text/plain"
+            else -> "application/zip"
+        }
+
         fun sourceLabel(mimeType: String): String = when (mimeType) {
-            AudioFormat.MIME_FLAC -> "flac"; AudioFormat.MIME_M4A -> "m4a"; AudioFormat.MIME_RAW_PCM -> "pcm"; else -> mimeType
+            AudioFormat.MIME_FLAC -> "flac"
+            AudioFormat.MIME_M4A -> "m4a"
+            AudioFormat.MIME_MP3 -> "mp3"
+            AudioFormat.MIME_WAV -> "wav"
+            AudioFormat.MIME_RAW_PCM -> "pcm"
+            else -> mimeType
         }
 
         /** Rough size for the confirmation screen; the worker reports the true size at the end. */
         fun estimateBytes(format: ExportAudioFormat, source: ExportSource): Long = when (format) {
             ExportAudioFormat.STORED -> if (source.mimeType == AudioFormat.MIME_RAW_PCM) source.durationMs * AudioFormat.BYTES_PER_MS + 44 else source.byteSize
             ExportAudioFormat.WAV -> source.durationMs * AudioFormat.BYTES_PER_MS + 44
-            ExportAudioFormat.MP3 -> source.durationMs * AudioFormat.EXPORT_MP3_BITRATE_KBPS / 8
+            ExportAudioFormat.MP3 -> source.durationMs * AudioFormat.EXPORT_MP3_BITRATE_KBPS * 1000 / 8 / 1000
         }
     }
 }

@@ -65,6 +65,7 @@ class OboeAudioRecorderEngine @Inject constructor(
     private var reducer: PeakReducer? = null
     private var thread: CaptureWriterThread? = null
     private var config: CaptureConfig? = null
+    private var fgsStarted: Boolean = false
     private val ticker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "songpad-capture-ticker").apply { isDaemon = true } }
     private var tick: java.util.concurrent.ScheduledFuture<*>? = null
 
@@ -88,13 +89,19 @@ class OboeAudioRecorderEngine @Inject constructor(
         val t = CaptureWriterThread(nc, pcm, red, clockMapping, onSyncCadence = { onSyncCadence() }, onError = ::onWriterError)
 
         this.native = nc; this.writer = pcm; this.reducer = red; this.thread = t; this.config = config
+        val src = nc.start()
+        if (src != 0) { teardown(deleteFile = true); return domainFailure(CaptureError.StreamOpenFailed("start result $src")) }
+
         CaptureSessionFlag.set(true)
-        CaptureForegroundService.start(context, config.takeId)
+        runCatching {
+            CaptureForegroundService.start(context, config.takeId)
+            fgsStarted = true
+        }.onFailure { e ->
+            Log.w(TAG, "CaptureForegroundService start failed", e)
+        }
         focus.registerRouteListeners(onBecomingNoisy = { onInterrupted(InterruptionReason.HEADPHONES_UNPLUGGED) }, onBluetoothLost = { onInterrupted(InterruptionReason.BLUETOOTH_DISCONNECTED) })
 
         t.start()
-        val src = nc.start()
-        if (src != 0) { teardown(deleteFile = true); return domainFailure(CaptureError.StreamOpenFailed("start result $src")) }
         _state.value = RecordingState.Recording(0)
         tick = ticker.scheduleAtFixedRate({ onTick() }, 100, 100, TimeUnit.MILLISECONDS)
         Log.i(TAG, "capture started ${config.takeId} ${nc.streamInfo()}")
@@ -204,7 +211,10 @@ class OboeAudioRecorderEngine @Inject constructor(
         runCatching { writer?.close() }
         native?.let { it.closeStream(); it.close() }
         focus.unregisterRouteListeners(); focus.abandon()
-        CaptureForegroundService.stop(context)
+        if (fgsStarted) {
+            fgsStarted = false
+            runCatching { CaptureForegroundService.stop(context) }
+        }
         CaptureSessionFlag.set(false)
         config?.let { if (deleteFile) files.deleteTakeFiles(it.takeId) }
         native = null; writer = null; reducer = null; thread = null; config = null

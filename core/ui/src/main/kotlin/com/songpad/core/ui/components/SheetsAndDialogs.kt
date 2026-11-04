@@ -10,10 +10,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +71,8 @@ fun SongPadBottomSheet(
         Column(
             Modifier
                 .fillMaxWidth()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(start = Spacing.screen, end = Spacing.screen, bottom = 26.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
@@ -259,4 +264,106 @@ fun TextInputDialog(
             )
         },
     )
+}
+
+/**
+ * Reusable bottom sheet for importing SongPad bundles (`.zip`, `.songpad`, `.bin`), standalone audio recordings
+ * (`.m4a`, `.flac`, `.wav`, `.mp3`), and plain-text lyrics (`.txt`).
+ */
+@Composable
+fun ImportBottomSheet(
+    onDismiss: () -> Unit,
+    onPickBundleOrAny: () -> Unit,
+    onPickAudio: () -> Unit,
+    onPickLyrics: () -> Unit,
+    title: String = "Import into SongPad",
+    subtitle: String = "Restore an exported song bundle (.zip or .songpad), or bring in audio recordings and .txt lyrics.",
+    allowBundle: Boolean = true,
+    isBusy: Boolean = false,
+    statusTitle: String? = null,
+    statusBody: String? = null,
+    isError: Boolean = false,
+    primaryActionLabel: String? = null,
+    onPrimaryAction: (() -> Unit)? = null,
+) {
+    val c = SongPadTheme.colors
+    SongPadBottomSheet(
+        onDismiss = onDismiss,
+        title = title,
+        subtitle = subtitle,
+    ) {
+        if (isBusy) {
+            Surface(
+                shape = RoundedCornerShape(Radii.card),
+                color = c.surface,
+                border = BorderStroke(1.dp, c.divider),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = statusTitle ?: "Importing…",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = c.text,
+                    )
+                    Text(
+                        text = statusBody ?: "Reading files, restoring sections, and building waveform peaks…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.textSecondary,
+                    )
+                }
+            }
+        } else if (statusTitle != null) {
+            Surface(
+                shape = RoundedCornerShape(Radii.card),
+                color = if (isError) c.accent100 else c.surface,
+                border = BorderStroke(1.dp, if (isError) c.accent else c.divider),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = statusTitle,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (isError) c.accent800 else c.success,
+                    )
+                    if (!statusBody.isNullOrBlank()) {
+                        Text(
+                            text = statusBody,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isError) c.accent800 else c.textSecondary,
+                        )
+                    }
+                }
+            }
+            if (primaryActionLabel != null && onPrimaryAction != null) {
+                Spacer(Modifier.height(4.dp))
+                PrimaryButton(
+                    text = primaryActionLabel,
+                    onClick = onPrimaryAction,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+
+        if (!isBusy) {
+            if (allowBundle) {
+                SheetOptionRow(
+                    label = "Song bundle (.zip, .songpad, .bin)",
+                    meta = "Songs, takes, lyrics & notes",
+                    accent = true,
+                    onClick = onPickBundleOrAny,
+                )
+            }
+            SheetOptionRow(
+                label = "Audio recording (.mp3, .wav, .m4a, .flac)",
+                meta = "Imports as a playable take",
+                accent = !allowBundle,
+                onClick = onPickAudio,
+            )
+            SheetOptionRow(
+                label = "Lyrics text file (.txt)",
+                meta = "Parses [Verse], [Chorus], etc.",
+                onClick = onPickLyrics,
+            )
+        }
+    }
 }

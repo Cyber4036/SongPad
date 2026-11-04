@@ -26,11 +26,12 @@ object SmfWriter {
         track.write(byteArrayOf(0x00, 0xFF.toByte(), 0x51, 0x03, (microsPerQuarter ushr 16).toByte(), (microsPerQuarter ushr 8).toByte(), microsPerQuarter.toByte()))
         var lastTick = 0L
         for (e in sorted) {
-            val tick = MidiTiming.frameToTick(e.frameIndex)
-            Vlq.write(track, tick - lastTick)
-            lastTick = tick
-            if (e.isNoteOn) track.write(byteArrayOf(0x90.toByte(), e.note.toByte(), e.velocity.coerceIn(1, 127).toByte()))
-            else track.write(byteArrayOf(0x80.toByte(), e.note.toByte(), 0x00))
+            val tick = MidiTiming.frameToTick(e.frameIndex.coerceAtLeast(0L))
+            val delta = (tick - lastTick).coerceIn(0L, 0x0FFF_FFFFL)
+            Vlq.write(track, delta)
+            lastTick = maxOf(lastTick, tick)
+            if (e.isNoteOn) track.write(byteArrayOf(0x90.toByte(), e.note.coerceIn(0, 127).toByte(), e.velocity.coerceIn(1, 127).toByte()))
+            else track.write(byteArrayOf(0x80.toByte(), e.note.coerceIn(0, 127).toByte(), 0x00))
         }
         track.write(byteArrayOf(0x00, 0xFF.toByte(), 0x2F, 0x00))
         val trackBytes = track.toByteArray()

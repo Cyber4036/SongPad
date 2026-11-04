@@ -65,6 +65,7 @@ interface TakeDao {
     @Query("SELECT COUNT(*) FROM take WHERE song_id = :songId AND deleted = 0") suspend fun countForSong(songId: String): Int
     @Query("SELECT song_id AS songId, COUNT(*) AS cnt FROM take WHERE deleted = 0 AND song_id IS NOT NULL GROUP BY song_id")
     fun observeCountsBySong(): Flow<List<SongCountRow>>
+    @Query("SELECT name FROM take WHERE deleted = 0") suspend fun allActiveNames(): List<String>
 }
 
 data class SongCountRow(val songId: String, val cnt: Int)
@@ -93,6 +94,10 @@ interface LyricsDao {
     @Update suspend fun updateDocument(doc: LyricsDocumentEntity)
     @Query("SELECT * FROM lyrics_document WHERE song_id = :songId AND deleted = 0") suspend fun documentForSong(songId: String): LyricsDocumentEntity?
     @Query("SELECT * FROM lyrics_document WHERE song_id = :songId AND deleted = 0") fun observeDocument(songId: String): Flow<LyricsDocumentEntity?>
+    @Query("SELECT * FROM lyrics_document WHERE id = :id AND deleted = 0") suspend fun documentById(id: String): LyricsDocumentEntity?
+    @Query("SELECT * FROM lyrics_document WHERE id = :id AND deleted = 0") fun observeDocumentById(id: String): Flow<LyricsDocumentEntity?>
+    @Query("SELECT * FROM lyrics_document WHERE song_id IS NULL AND deleted = 0 ORDER BY updated_at DESC") fun observeUnassignedDocuments(): Flow<List<LyricsDocumentEntity>>
+    @Query("SELECT name FROM lyrics_document WHERE deleted = 0 AND name != ''") suspend fun allActiveNames(): List<String>
 
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertSection(section: SectionEntity)
     @Update suspend fun updateSection(section: SectionEntity)
@@ -117,7 +122,7 @@ interface LyricsDao {
     @Query("SELECT COUNT(*) FROM section sec JOIN lyrics_document d ON d.id = sec.document_id WHERE d.song_id = :songId AND sec.deleted = 0 AND TRIM(sec.body_text) != ''")
     suspend fun nonEmptySectionCount(songId: String): Int
 
-    @Query("SELECT d.song_id AS songId, COUNT(sec.id) AS cnt FROM lyrics_document d JOIN section sec ON sec.document_id = d.id AND sec.deleted = 0 WHERE d.deleted = 0 GROUP BY d.song_id")
+    @Query("SELECT d.song_id AS songId, COUNT(sec.id) AS cnt FROM lyrics_document d JOIN section sec ON sec.document_id = d.id AND sec.deleted = 0 WHERE d.deleted = 0 AND d.song_id IS NOT NULL GROUP BY d.song_id")
     fun observeSectionCountsBySong(): Flow<List<SongCountRow>>
 }
 

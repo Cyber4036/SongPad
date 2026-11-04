@@ -1,5 +1,6 @@
 package com.songpad.feature.song.library
 
+import com.songpad.core.model.lyrics.LyricsDocument
 import com.songpad.core.model.song.Song
 import com.songpad.core.model.song.SongFilter
 import com.songpad.core.model.state.QualityDisclosureState
@@ -24,13 +25,13 @@ sealed interface LibraryState {
         override val nowPlaying get(): NowPlaying? = null
     }
 
-    /** Unassigned takes are playable here too (§7.6 unified playback) — the only surface where Library itself,
-     * not a Song, is the playback context. */
+    /** Unassigned takes and standalone lyrics are accessible here at the top of the Library. */
     data class Populated(
         val songs: List<Song>,
         val unassignedTakes: List<Take>,
         override val disclosure: QualityDisclosureState,
         override val nowPlaying: NowPlaying?,
+        val unassignedLyrics: List<LyricsDocument> = emptyList(),
     ) : LibraryState {
         override val filter get() = SongFilter.ALL
     }
@@ -42,6 +43,7 @@ sealed interface LibraryState {
         val unassignedTakes: List<Take>,
         override val disclosure: QualityDisclosureState,
         override val nowPlaying: NowPlaying?,
+        val unassignedLyrics: List<LyricsDocument> = emptyList(),
     ) : LibraryState
 }
 
@@ -51,8 +53,22 @@ sealed interface LibrarySheet {
     data class AssignTake(val take: Take, val songs: List<Song>) : LibrarySheet
     data class NewSongForTake(val take: Take) : LibrarySheet
     data class ConfirmDeleteTake(val take: Take) : LibrarySheet
+    /** Standalone lyrics sheets: assign to song, create new song, edit standalone lyrics, rename, or delete. */
+    data class AssignLyrics(val document: LyricsDocument, val songs: List<Song>) : LibrarySheet
+    data class NewSongForLyrics(val document: LyricsDocument) : LibrarySheet
+    data class EditStandaloneLyrics(val documentId: String) : LibrarySheet
+    data class RenameStandaloneLyrics(val document: LyricsDocument) : LibrarySheet
+    data class ConfirmDeleteStandaloneLyrics(val document: LyricsDocument) : LibrarySheet
     /** Song card `•••` options sheet (Capture.html §Songs). */
     data class SongOptions(val song: Song) : LibrarySheet
     data class RenameSong(val song: Song) : LibrarySheet
     data class ConfirmDeleteSong(val song: Song) : LibrarySheet
+    /** Import sheet for bundles (.songpad, .zip), standalone audio files, or .txt lyrics. */
+    data class Import(
+        val isBusy: Boolean = false,
+        val statusTitle: String? = null,
+        val statusBody: String? = null,
+        val isError: Boolean = false,
+        val importedSongId: String? = null,
+    ) : LibrarySheet
 }

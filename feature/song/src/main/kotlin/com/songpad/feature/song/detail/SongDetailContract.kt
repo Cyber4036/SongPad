@@ -83,6 +83,12 @@ sealed interface SongDetailDialog {
     data class ConfirmDeleteSection(val sectionId: String, val label: String) : SongDetailDialog
     data class ConfirmDeleteNote(val noteId: String) : SongDetailDialog
     data object ConfirmDeleteSong : SongDetailDialog
+    data class Import(
+        val isBusy: Boolean = false,
+        val statusTitle: String? = null,
+        val statusBody: String? = null,
+        val isError: Boolean = false,
+    ) : SongDetailDialog
 }
 
 /** Reads `peaks.wave` for the ribbon player's seek waveform (§7.1). Bound to PeakReducer in the feature module. */

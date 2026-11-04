@@ -84,7 +84,11 @@ fun SearchScreen(
                     }
                     if (r.lyrics.isNotEmpty() && (filter == SearchFilter.ALL || filter == SearchFilter.LYRICS)) {
                         item { SectionHeader("Lyrics") }
-                        items(r.lyrics, key = { "l" + it.sectionId }) { m -> ResultRow(m.label, SnippetHighlight.annotate(m.snippet, c.accent)) { onOpenLyrics(m.songId, m.sectionId) } }
+                        items(r.lyrics, key = { "l" + it.sectionId }) { m ->
+                            ResultRow(m.label, SnippetHighlight.annotate(m.snippet, c.accent)) {
+                                if (m.songId.isNotEmpty()) onOpenLyrics(m.songId, m.sectionId)
+                            }
+                        }
                     }
                     if (r.notes.isNotEmpty() && (filter == SearchFilter.ALL || filter == SearchFilter.NOTES)) {
                         item { SectionHeader("Notes") }

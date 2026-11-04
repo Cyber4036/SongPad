@@ -44,9 +44,10 @@ class PianoSamplerEngineImpl @Inject constructor(
     private val _loaded = MutableStateFlow(false)
     override val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
 
-    private var loadStarted = false
-    private var armedMode: TakeType = TakeType.PIANO
+    @Volatile private var loadStarted = false
+    @Volatile private var armedMode: TakeType = TakeType.PIANO
 
+    @Synchronized
     override fun loadAsync() {
         if (loadStarted) return
         loadStarted = true
@@ -81,16 +82,18 @@ class PianoSamplerEngineImpl @Inject constructor(
         }
     }
 
+    @Synchronized
     override fun arm(mode: TakeType): Result<Unit> {
         armedMode = mode
+        startCaptureMix()
         val openResult = native.open()
         if (openResult != 0) return domainFailure(PianoError.StreamOpenFailed("open result $openResult"))
         val startResult = native.start()
         if (startResult != 0) return domainFailure(PianoError.StreamOpenFailed("start result $startResult"))
-        startCaptureMix()
         return Result.success(Unit)
     }
 
+    @Synchronized
     override fun disarm() {
         stopCaptureMix()
         native.allNotesOff()

@@ -27,7 +27,11 @@ class FakeSearchEngine(val store: InMemoryStore = InMemoryStore()) : SearchEngin
             }
             SearchResults(
                 songs = if (songId == null) songs.values.filter { !it.meta.deleted && hit(it.name) }.map { SongMatch(it.id, it.name, snip(it.name), -1.0) } else emptyList(),
-                lyrics = docs.values.filter { songId == null || it.songId == songId }.flatMap { d -> d.sections.filter { hit(it.bodyText) || hit(it.displayLabel) }.map { SectionMatch(it.id, d.songId, it.displayLabel, snip(it.bodyText), -1.0) } },
+                lyrics = docs.values.filter { !it.meta.deleted && (songId == null || it.songId == songId) }.flatMap { d ->
+                    d.sections.filter { hit(it.bodyText) || hit(it.displayLabel) }.map {
+                        SectionMatch(it.id, d.songId.orEmpty(), it.displayLabel, snip(it.bodyText), -1.0, d.id)
+                    }
+                },
                 notes = notes.values.filter { !it.meta.deleted && (songId == null || it.songId == songId) && hit(it.bodyText) }.map { NoteMatch(it.id, it.songId, snip(it.bodyText), -1.0) },
                 takes = takes.values.filter { !it.meta.deleted && (songId == null || it.songId == songId) && hit(it.name) }.map { TakeMatch(it.id, it.songId, it.name, snip(it.name), -1.0) },
             )

@@ -33,9 +33,12 @@ class SearchEngineImpl @Inject constructor(private val db: SongPadDatabase) : Se
         return db.searchDao().search(raw).map { rows -> group(rows) }
     }
 
-    private fun group(rows: List<SearchRow>): SearchResults = SearchResults(
+    private suspend fun group(rows: List<SearchRow>): SearchResults = SearchResults(
         songs = rows.filter { it.entity_type == SearchIndexDdl.TYPE_SONG }.map { SongMatch(it.entity_id, it.search_title, it.snippet_text.ifBlank { it.search_title }, it.rank) },
-        lyrics = rows.filter { it.entity_type == SearchIndexDdl.TYPE_SECTION }.map { SectionMatch(it.entity_id, it.song_id ?: "", it.search_title, it.snippet_text, it.rank) },
+        lyrics = rows.filter { it.entity_type == SearchIndexDdl.TYPE_SECTION }.map {
+            val docId = if (it.song_id == null) db.lyricsDao().section(it.entity_id)?.documentId.orEmpty() else ""
+            SectionMatch(it.entity_id, it.song_id ?: "", it.search_title, it.snippet_text, it.rank, docId)
+        },
         notes = rows.filter { it.entity_type == SearchIndexDdl.TYPE_NOTE }.map { NoteMatch(it.entity_id, it.song_id ?: "", it.snippet_text, it.rank) },
         takes = rows.filter { it.entity_type == SearchIndexDdl.TYPE_TAKE }.map { TakeMatch(it.entity_id, it.song_id, it.search_title, it.snippet_text.ifBlank { it.search_title }, it.rank) },
     )

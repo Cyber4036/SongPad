@@ -37,10 +37,23 @@ data class SongBundleManifest(
     )
 
     @Serializable
-    data class SectionInfo(val id: String, val label: String, val tag: String, val sortOrder: Int)
+    data class SectionInfo(
+        val id: String,
+        val label: String,
+        val tag: String,
+        val sortOrder: Int,
+        val bodyText: String = "",
+        val customLabel: String? = null,
+    )
 
     @Serializable
-    data class NoteInfo(val id: String, val createdAtMillis: Long, val sectionRefId: String?, val takeRefId: String?)
+    data class NoteInfo(
+        val id: String,
+        val createdAtMillis: Long,
+        val sectionRefId: String?,
+        val takeRefId: String?,
+        val bodyText: String = "",
+    )
 
     companion object {
         const val SCHEMA_VERSION = 1
