@@ -18,16 +18,19 @@ import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.wav.WavExtractor
+import com.songpad.core.audio.transcode.FlacHeader
 import com.songpad.core.model.audio.PlaybackController
 import com.songpad.core.model.audio.PlaybackSource
 import com.songpad.core.model.audio.PlaybackState
 import com.songpad.core.model.error.PlaybackError
 import com.songpad.core.model.take.AudioFormat
 import com.songpad.core.model.take.TakeFileStore
+import com.songpad.core.model.take.TakePaths
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -48,6 +51,7 @@ class Media3PlaybackController @Inject constructor(
 
     private val main = Handler(Looper.getMainLooper())
     private var current: PlaybackSource? = null
+    private var retriedWithPcmFallback = false
     private val ticker = object : Runnable {
         override fun run() {
             val p = player
@@ -71,7 +75,12 @@ class Media3PlaybackController @Inject constructor(
                         val src = current ?: return
                         when (playbackState) {
                             Player.STATE_BUFFERING -> _state.value = PlaybackState.Loading(src)
-                            Player.STATE_READY -> if (p.playWhenReady) { _state.value = PlaybackState.Playing(src, p.currentPosition, p.duration.coerceAtLeast(0)); main.post(ticker) } else _state.value = PlaybackState.Paused(src, p.currentPosition, p.duration.coerceAtLeast(0))
+                            Player.STATE_READY -> if (p.playWhenReady) {
+                                _state.value = PlaybackState.Playing(src, p.currentPosition, p.duration.coerceAtLeast(0))
+                                main.post(ticker)
+                            } else {
+                                _state.value = PlaybackState.Paused(src, p.currentPosition, p.duration.coerceAtLeast(0))
+                            }
                             Player.STATE_ENDED -> _state.value = PlaybackState.Ended(src, p.duration.coerceAtLeast(0))
                             Player.STATE_IDLE -> Unit
                         }
@@ -83,7 +92,22 @@ class Media3PlaybackController @Inject constructor(
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
-                        _state.value = PlaybackState.Error(current, PlaybackError.Decoder(error.errorCodeName))
+                        val src = current
+                        if (src != null && !retriedWithPcmFallback) {
+                            retriedWithPcmFallback = true
+                            val fallbackPcmPath = findFallbackPcmRelativePath(src.takeId)
+                            if (fallbackPcmPath != null) {
+                                p.stop()
+                                p.clearMediaItems()
+                                p.setMediaItem(MediaItem.fromUri(RawPcmDataSource.uriFor(fallbackPcmPath)))
+                                p.prepare()
+                                p.playWhenReady = true
+                                return
+                            }
+                        }
+                        p.stop()
+                        p.clearMediaItems()
+                        _state.value = PlaybackState.Error(src, PlaybackError.Decoder(error.errorCodeName))
                     }
                 })
             }
@@ -91,21 +115,63 @@ class Media3PlaybackController @Inject constructor(
 
     override fun play(source: PlaybackSource) {
         main.post {
-            val file = files.file(source.relativePath)
-            if (!file.exists()) { _state.value = PlaybackState.Error(source, PlaybackError.SourceUnavailable("file missing")); return@post }
-            if (current?.relativePath == source.relativePath && player.playbackState != Player.STATE_IDLE && player.playbackState != Player.STATE_ENDED) {
-                player.play(); return@post
+            val primaryFile = files.file(source.relativePath)
+            if (current?.relativePath == source.relativePath &&
+                player.playbackState != Player.STATE_IDLE &&
+                player.playbackState != Player.STATE_ENDED &&
+                player.playerError == null
+            ) {
+                player.play()
+                return@post
             }
+
+            retriedWithPcmFallback = false
             current = source
             _state.value = PlaybackState.Loading(source)
-            val uri = when (source) {
-                is PlaybackSource.CommittedTake -> if (source.mimeType == AudioFormat.MIME_RAW_PCM) RawPcmDataSource.uriFor(source.relativePath) else Uri.fromFile(file)
-                is PlaybackSource.RawPcm, is PlaybackSource.InFlightPcm -> RawPcmDataSource.uriFor(source.relativePath)
+
+            val uri = resolvePlayableUri(source, primaryFile)
+            if (uri == null) {
+                _state.value = PlaybackState.Error(source, PlaybackError.SourceUnavailable("file missing"))
+                return@post
             }
+
             player.setMediaItem(MediaItem.fromUri(uri))
             player.prepare()
             player.playWhenReady = true
         }
+    }
+
+    private fun resolvePlayableUri(source: PlaybackSource, primaryFile: File): Uri? {
+        if (!primaryFile.exists() || primaryFile.length() == 0L) {
+            val fallbackPcm = findFallbackPcmRelativePath(source.takeId) ?: return null
+            retriedWithPcmFallback = true
+            return RawPcmDataSource.uriFor(fallbackPcm)
+        }
+
+        return when (source) {
+            is PlaybackSource.CommittedTake -> {
+                val isFlac = source.mimeType == AudioFormat.MIME_FLAC || primaryFile.name.endsWith(".flac", ignoreCase = true)
+                if (isFlac) {
+                    FlacHeader.ensureValidFlacFile(primaryFile)
+                }
+                if (source.mimeType == AudioFormat.MIME_RAW_PCM || primaryFile.name.endsWith(".pcm", ignoreCase = true) || primaryFile.name.endsWith(".tmp", ignoreCase = true)) {
+                    RawPcmDataSource.uriFor(source.relativePath)
+                } else {
+                    Uri.fromFile(primaryFile)
+                }
+            }
+            is PlaybackSource.RawPcm, is PlaybackSource.InFlightPcm -> RawPcmDataSource.uriFor(source.relativePath)
+        }
+    }
+
+    private fun findFallbackPcmRelativePath(takeId: String): String? {
+        val pcmRel = TakePaths.pcm(takeId)
+        val pcmFile = files.file(pcmRel)
+        if (pcmFile.exists() && pcmFile.length() > 0L) return pcmRel
+        val tmpRel = TakePaths.pcmTmp(takeId)
+        val tmpFile = files.file(tmpRel)
+        if (tmpFile.exists() && tmpFile.length() > 0L) return tmpRel
+        return null
     }
 
     override fun pause() { main.post { player.pause() } }

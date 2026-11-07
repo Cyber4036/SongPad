@@ -38,10 +38,12 @@ public:
         return tap;
     }
 
-    // Any thread. Enabling discards whatever is buffered so a stale backlog is never mixed in.
+    // Any thread. Enabling (or re-arming at record start) discards whatever is buffered so a stale backlog is never mixed in.
     void setEnabled(bool enabled, bool replaceMic = false) {
-        if (enabled && !enabled_.load(std::memory_order_acquire)) {
-            maxProducerBurst_.store(0, std::memory_order_relaxed);  // the new route may chunk differently
+        if (enabled) {
+            if (!enabled_.load(std::memory_order_acquire)) {
+                maxProducerBurst_.store(0, std::memory_order_relaxed);  // the new route may chunk differently
+            }
             resetPending_.store(true, std::memory_order_release);
         }
         replaceMic_.store(replaceMic, std::memory_order_release);

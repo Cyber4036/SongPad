@@ -195,6 +195,13 @@ fun LibraryScreen(
                         modifier = Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.xs),
                     )
                 }
+                state.playbackError?.let { errorMsg ->
+                    PlaybackErrorBanner(
+                        message = errorMsg,
+                        onDismiss = viewModel::dismissPlaybackError,
+                        modifier = Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.xs),
+                    )
+                }
                 when (val s = state) {
                     is LibraryState.Loading -> Unit
                     is LibraryState.EmptyLibrary -> EmptyState(
@@ -755,6 +762,49 @@ private fun highlightSnippet(snippet: String, highlight: androidx.compose.ui.gra
         append(snippet.substring(open + openTag.length, close))
         pop()
         i = close + closeTag.length
+    }
+}
+
+@Composable
+private fun PlaybackErrorBanner(
+    message: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = SongPadTheme.colors
+    Surface(
+        shape = RoundedCornerShape(Radii.card),
+        color = c.recordSoft,
+        border = BorderStroke(1.dp, c.destructive),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                color = c.destructive,
+                modifier = Modifier.weight(1f),
+            )
+            Surface(
+                onClick = onDismiss,
+                shape = CircleShape,
+                color = Color.Transparent,
+                modifier = Modifier.size(28.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Dismiss playback error",
+                        tint = c.destructive,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan for fixing SongPad exports (.songpad/.bin extension issue and native LAME MP3 encoder availability) and adding full round-trip Import support across bundles, audio files, and text lyrics.",
-  "updatedAt": "2026-11-04T05:20:58.861178759Z",
+  "summary": "Implementation plan to resolve Android 11/12 Galaxy import crashes (InputStream.readNBytes API 33 incompatibility), Lossless FLAC and AAC container corruption (ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED), automatic header repair and PCM fallback for existing damaged takes, Oboe piano stream lifecycle hardening across repeated recordings, and Library playback error banner surfacing.",
+  "updatedAt": "2026-11-06T20:18:54.276358235Z",
   "requestFeedback": true,
   "userFacing": true
 }

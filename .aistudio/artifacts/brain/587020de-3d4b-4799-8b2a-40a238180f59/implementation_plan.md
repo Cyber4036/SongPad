@@ -1,71 +1,68 @@
-# SongPad Export Overhaul & Full Round-Trip Import
+# Galaxy Device Compatibility, Lossless FLAC & Piano Recording Playback Fix
 
-This update resolves the issue where every export creates an unreadable `.songpad` / `.bin` file, enables native LAME MP3 encoding so MP3 exports succeed reliably, and introduces a complete round-trip Import workflow for song bundles (`.zip` / `.songpad`), standalone audio recordings (`.m4a`, `.flac`, `.wav`, `.mp3`), and plain-text lyrics (`.txt`).
+This update resolves the three device-specific failures observed on the Samsung Galaxy (Android 11 / API 30): the `NoSuchMethodError: readNBytes` crash when importing exported songs, the `ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED` playback failure on recordings made after enabling Lossless (FLAC) mode or recording Piano takes, and the silent playback failure state on the main Songs Library screen.
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following product and architecture choices reflect your confirmed preferences and resolve all three export/import failure modes.
+> The following architectural and UX decisions incorporate your confirmed answers from Phase 1.
 
-- **Confirmed Decision 1 — Direct Files + Standard `.zip` Bundles**:
-  - **Lyrics Only** exports produce a direct human-readable `.txt` file (`<SongName>_Lyrics.txt`, `text/plain`) rather than a compressed archive.
-  - **Single-Take** exports (either when a song has 1 take in *Audio takes* mode without MIDI, or when choosing **"Export take"** from a specific take's `•••` menu) export the direct audio file (`<SongName> - <TakeName>.m4a` / `.flac` / `.wav` / `.mp3`) with its true audio MIME type (`audio/mp4`, `audio/flac`, `audio/wav`, `audio/mpeg`).
-  - **Multi-Item / Everything** exports produce a standard `.zip` archive (`Export_<SongName>_<yyyyMMdd-HHmm>.zip`, `application/zip`) so Android SAF, file managers, and desktop DAWs never rename or treat the output as an unknown `.bin` binary.
-- **Confirmed Decision 2 — Native LAME MP3 Encoding Fixed**:
-  - Vendor and compile LAME 3.100 into the native NDK library (`libsongpad_lame.so`) so `LameMp3Encoder` is always available at runtime (48 kHz mono, 192 kbps CBR).
-- **Confirmed Decision 3 — Universal Import Scope (`.zip`, `.songpad`, Audio, `.txt`)**:
-  - Users can import full song archives (both legacy `.songpad` files that may have been saved as `.bin` and new `.zip` bundles), standalone audio recordings (`.m4a`, `.flac`, `.wav`, `.mp3`, `.aac`, `.ogg`), and `.txt` lyrics documents.
-- **Confirmed Decision 4 — Import Entry Points Across the App**:
-  - Accessible from the **Library header** (import button next to Settings), **Settings → Storage & data** ("Import songs, takes or lyrics"), and **inside any Song Detail screen** (to import an audio take or lyrics `.txt` directly into that song, plus direct single-take export from any take's `•••` menu).
+- **Confirmed Decision 1 — Fix Lossless FLAC & Standard M4A Transcoding**:
+  - After making your first two working recordings in Standard quality, switching to **Lossless (FLAC)** caused every subsequent recording (`Piano take 2`, `Piano take 4`, `Voice + Piano take 4`, `Voice take 2`) to be encoded via the FLAC `MediaCodec` pipeline, which was stripping buffers flagged with `BUFFER_FLAG_CODEC_CONFIG`—discarding the mandatory 42-byte `fLaC` magic header and `STREAMINFO` block.
+  - We will write the `fLaC` + `STREAMINFO` header on every FLAC transcode (preserving codec config buffers and synthesizing a canonical 42-byte `fLaC` + `STREAMINFO` header when the hardware encoder omits it) and harden AAC/M4A muxing so `MediaMuxer.stop()` errors or non-monotonic timestamps never overwrite `audio.pcm`.
+- **Confirmed Decision 2 — Auto-Repair Existing Damaged Takes & Fall Back to Raw PCM**:
+  - When playing or scanning existing takes on the device, if a `.flac` file is missing its 42-byte `fLaC` + `STREAMINFO` header (because it was transcoded before this fix), the playback and recovery pipeline will automatically prepend the canonical 48 kHz / 16-bit / mono `fLaC` + `STREAMINFO` header in-place and regenerate any missing waveform peaks—restoring your existing Galaxy takes (`Piano take 2`, `Piano take 4`, `Voice + Piano take 4`, `Voice take 2`) without losing your recordings.
+  - If a transcoded file is ever unreadable and raw `audio.pcm` (or `.pcm.tmp`) still exists in the take folder, playback automatically falls back to the raw PCM stream.
+- **Confirmed Decision 3 — Surface Clear Playback Error Banner on Songs Library Screen**:
+  - Previously, `LibraryViewModel` mapped `PlaybackState.Error` to `null`, causing failed takes in the Unfiled list to either silently ignore taps or leave the `RibbonPlayer` frozen at `0:00`. The Library screen will now display a clear, dismissible inline error banner whenever a take cannot be played, matching the Song Detail screen's feedback.
 
 ---
 
 ### 1. Overview & Core Concept
 
 - **What It Does**:
-  1. **True-Format Export**: Delivers the exact file type the user expects—plain `.txt` for lyrics, direct `.mp3` / `.wav` / `.m4a` / `.flac` for single takes, and standard `.zip` archives for multi-track song bundles—with dynamic MIME registration so Android's "Save to files" and "Send to…" never append `.bin`.
-  2. **Working MP3 Export**: Bundles the LAME 3.100 C encoder into the native build so MP3 encoding works out-of-the-box for both single-take and full-bundle exports.
-  3. **Lossless Round-Trip Import**: Restores exported song bundles (including section body text, notes, audio takes, waveform peaks, and MIDI sidecars) and lets songwriters bring in external audio files or `.txt` lyric sheets into their library or directly into an open song.
-- **Target Audience / Persona**: Songwriters, vocalists, and musicians who rely on SongPad to safeguard their recorded ideas, move takes into DAWs or messaging apps, and restore backups without losing a single recording or lyric line.
-- **Key Value**: Eliminates data lock-in and export failures—every recording and lyric sheet can leave the app in a universally playable format and return intact whenever needed.
+  1. **Android 8–12 (API 26–32) Import Compatibility**: Replaces Java 11 / Android 13+ (`API 33`) `InputStream.readNBytes(int)` calls in the import engine with a universal bounded stream reader that works across all supported Android versions (`minSdk 26` through `compileSdk 36`).
+  2. **Valid Lossless FLAC & Verified M4A Transcoding**: Ensures every Lossless `.flac` recording begins with a valid `fLaC` + `STREAMINFO` header, verifies transcoded output against actual encoded frame timestamps and container extractability before deleting `audio.pcm`, and automatically repairs existing headerless `.flac` recordings on the device.
+  3. **Reliable Multi-Session Piano & Mic Capture on Budget HALs**: Fully closes and releases the low-latency Oboe piano output stream on `disarm()` (rather than leaving it in `Stopped` state, which stalls AAudio callback resumption on MediaTek/Samsung HALs after the first recording) and re-verifies stream health when starting capture so Piano-only and Voice + Piano takes always capture audible samples and waveform peaks.
+  4. **Transparent Playback Error Feedback**: Surfaces playback errors directly on the Songs Library screen and resets the player cleanly instead of leaving the transport stuck at `0:00`.
+- **Target Audience / Persona**: Songwriters capturing vocal and piano ideas across both older/budget Android phones (Android 8–12, Samsung Galaxy A-series, MediaTek/Exynos HALs) and modern flagships (Pixel, Android 13–16).
+- **Key Value**: Guarantees that every recording—whether Standard M4A or Lossless FLAC, Voice or Piano-only—plays back reliably and can be exported and re-imported on any Android device.
 
 ---
 
 ### 2. User Experience & Visual Design
 
 - **Key User Flows**:
-  1. **Exporting from Song Detail (`Share / Export` button)**:
-     - The user chooses **Everything**, **Audio takes**, or **Lyrics only**, plus the audio format (**Stored M4A/FLAC**, **WAV**, or **MP3**).
-     - The summary card clearly states the output format and file extension before confirmation (e.g., `Export_Midnight_20261103.zip`, `Midnight_Lyrics.txt`, or `01 Verse idea.mp3`).
-     - Tapping **Save to files** or **Send to…** uses the exact MIME type (`text/plain`, `audio/mpeg`, `audio/wav`, `audio/mp4`, `audio/flac`, or `application/zip`) so the OS file picker and share sheet preserve the real extension.
-  2. **Exporting a Single Take (`•••` → `Export take`)**:
-     - Opens the Export screen pre-scoped to that specific take (with a chip showing the selected take name and an option to switch to all takes). Exporting produces the standalone `.mp3`, `.wav`, `.m4a`, or `.flac` audio file directly.
-  3. **Importing from Library or Settings**:
-     - Tapping the **Import** action in the Library top bar or in **Settings → Storage & data** opens the system document picker (`OpenDocument` accepting `*/*` so even previously exported `.songpad` or `.bin` files can be selected alongside `.zip`, `audio/*`, and `text/plain`).
-     - An **Import Bottom Sheet** displays instant progress and a completion summary (e.g., *"Imported 'Midnight' (3 takes, 4 lyric sections, 2 notes)"* with an **Open Song** button, or *"Imported audio take into Unfiled"* / *"Imported lyrics into Unfiled"*).
-  4. **Importing Inside an Open Song**:
-     - On the **Song Detail** screen, the top action row or tab actions let the user import an external audio file directly as a take in that song, or import a `.txt` file / bundle's lyrics directly into the song's Lyrics tab.
+  1. **Importing an Exported Song or Audio File on Android 11/12**:
+     - Selecting an exported `.zip` / `.songpad` / `.bin` bundle, audio file, or `.txt` lyric sheet in the **Import to SongPad** bottom sheet reads magic bytes and waveform samples using a universal byte-buffer loop, completing the import and showing the *"Imported '<SongName>'"* confirmation card with the **Open imported song** action.
+  2. **Playing Existing & Newly Recorded Lossless (FLAC) or Piano Takes**:
+     - Tapping **Play** on any existing take that previously failed with `ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED` (such as `Piano take 2`, `Piano take 4`, `Voice + Piano take 4`, or `Voice take 2`) triggers an automatic header inspection: if the `.flac` file lacks its `fLaC` magic header, SongPad repairs the 42-byte `fLaC` + `STREAMINFO` header and rebuilds `peaks.wave` on the fly before handing the URI to ExoPlayer.
+     - Newly recorded Piano-only, Voice + Piano, and Voice takes in both **Standard** and **Lossless** modes play immediately with full scrubbable waveforms in the `RibbonPlayer`.
+  3. **Playback Error Banner on Songs Library Screen**:
+     - If a take's audio file is genuinely missing or corrupted beyond repair, tapping Play on the Songs Library screen displays a clear, dismissible inline alert banner above the Unfiled / Songs list (e.g., *"Playback failed: <reason>"*) and resets the play button state cleanly.
 
 - **Visual Identity & Theme**:
-  - *Aesthetic Direction*: Editorial warm-paper notebook (`SongPad` theme) and cool-slate studio (`Melody Studio` theme), matching the existing tactile studio aesthetic.
-  - *Color Palette & Mood*: Uses `SongPadTheme.colors` semantic tokens (`c.bg`, `c.surface`, `c.accent`, `c.accent100`, `c.accent800`, `c.text`, `c.textSecondary`, `c.divider`, `c.success`) with zero hardcoded hex values in feature screens.
-  - *Typography & Hierarchy*: `Caprasimo` display headings (`SongPadFonts.heading`) paired with `Figtree` body and label typography, maintaining crisp pill badges (`TagChip`) and `SettingsGroupCard` containers.
-  - *Interactive Feedback & Motion*: Smooth progress indicators during bundle extraction/waveform peak generation, clear confirmation cards with file size and format badges, and non-destructive conflict resolution (automatically suffixing `(imported)` if a song with the same name already exists).
+  - *Aesthetic Direction*: Retains SongPad's warm editorial notebook (`SongPad`) and cool studio (`Melody Studio`) theme families.
+  - *Color Palette & Mood*: Uses `SongPadTheme.colors` semantic tokens (`c.surface`, `c.accent`, `c.danger`, `c.text`, `c.textSecondary`, `c.divider`) for the Library playback error banner, matching Song Detail's error presentation.
+  - *Typography & Hierarchy*: `Caprasimo` display headers paired with `Figtree` body and tabular-numeral (`tnum`) transport timers.
+  - *Interactive Feedback & Motion*: Instant play/pause state transitions in `UnfiledTakeRow`, `TakeListItem`, and `RibbonPlayer`, with automatic waveform peak regeneration when repairing legacy takes.
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Smart Output Container (Direct File vs. `.zip` Bundle)**
-  - *Chosen Approach*: Output a direct `.txt` file for *Lyrics only*, a direct `.mp3`/`.wav`/`.m4a`/`.flac` file when exporting a single take without extra bundle files, and a `.zip` archive when exporting multiple takes or *Everything* (audio + lyrics + notes + `song.json`).
-  - *Why*: Android's `CreateDocument` and share targets map unknown extensions like `.songpad` to `.bin` (`application/octet-stream`) or append `.zip`. Using real `.txt`, `.mp3`, `.wav`, `.m4a`, `.flac`, and `.zip` extensions with matching MIME types guarantees every exported file opens immediately in music players, text editors, and file managers.
-  - *Alternatives Considered*: Always wrapping single takes or lyrics in a `.zip`—rejected because users exporting a single MP3 or lyric sheet want to play or read it immediately without unzipping first.
-- **Decision 2: Enriching `song.json` Manifest While Supporting Legacy Exports**
-  - *Chosen Approach*: Include `bodyText` and `customLabel` inside `SongBundleManifest.SectionInfo` and `bodyText` inside `SongBundleManifest.NoteInfo` for lossless JSON restoration, while also adding a fallback parser for `lyrics.txt` and `notes.txt` when importing older `.songpad` / `.bin` archives that only stored section/note IDs in `song.json`.
-  - *Why*: Ensures users who already exported `.songpad` or `.bin` files before this update can recover 100% of their takes, lyrics, and notes.
-- **Decision 3: Waveform Peaks & Audio Metadata Extraction on Import**
-  - *Chosen Approach*: When importing audio files (from a bundle or standalone), extract duration and sample rate via Android `MediaMetadataRetriever` / `PcmDecoder` and compute a `.peaks` sidecar file (`PeakReducer`) so imported takes display full interactive waveforms in the `RibbonPlayer` just like native recordings.
-  - *Why*: Prevents blank waveforms or zero-duration takes after import.
+- **Decision 1: Universal Pre-API-33 Byte Reader Instead of `InputStream.readNBytes`**
+  - *Chosen Approach*: Implement a dedicated `readUpToNBytes(count: Int): ByteArray` extension on `InputStream` using standard `read(buffer, offset, remaining)` loops.
+  - *Why*: `InputStream.readNBytes(int)` was added to Android's `core-oj.jar` in API 33 (Android 13). Even though it compiles against SDK 36, calling it on Android 11 (API 30) throws `NoSuchMethodError` (`java.lang.Error`). A standard loop works identically on API 26–36.
+- **Decision 2: Self-Healing FLAC Header Repair + Strict Transcode Verification**
+  - *Chosen Approach*:
+    1. During FLAC transcoding, write `BUFFER_FLAG_CODEC_CONFIG` output buffers and ensure the file starts with the 42-byte `fLaC` + `STREAMINFO` header (48 kHz, 1 channel, 16-bit, total sample count).
+    2. Before `TranscodeWorker` deletes `audio.pcm`, verify that `MediaExtractor` can actually parse at least one audio track from the transcoded file and that actual encoded output timestamps (`lastPtsUs`) match the input PCM duration.
+    3. Before playing any `.flac` take (and during startup recovery), inspect the first 4 bytes: if `"fLaC"` is missing, atomically prepend the 42-byte `fLaC` + `STREAMINFO` header and regenerate `peaks.wave` if needed.
+  - *Why*: Fixes both future recordings and the takes already recorded on your Galaxy without requiring you to re-record them.
+- **Decision 3: Full Close-and-Reopen Lifecycle for the Oboe Piano Output Stream**
+  - *Chosen Approach*: When `PianoSamplerEngine.disarm()` is called (or when capture starts and detects a stalled piano stream), fully close the native `PianoOutputStream` (`closeLocked()`) rather than leaving it in `Stopped` state via `requestStop()`, and reset `SamplerTap` when recording starts.
+  - *Why*: On Android 11 MediaTek/Samsung AAudio HALs, calling `requestStart()` on a previously stopped low-latency stream or opening a concurrent input stream can leave the output callback thread dormant, causing subsequent Piano recordings to capture digital silence and interfering with ExoPlayer's audio track.
 
 ---
 
@@ -75,63 +72,61 @@ This update resolves the issue where every export creates an unreadable `.songpa
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                                UI & Screens                                  │
+│                        Import & API 26–32 Compatibility                      │
 │                                                                              │
-│  ┌──────────────────────┐  ┌──────────────────────┐  ┌────────────────────┐  │
-│  │    LibraryScreen     │  │   SongDetailScreen   │  │   SettingsScreen   │  │
-│  │  • Header Import Btn │  │  • Export Song / Take│  │  • Storage & Data  │  │
-│  │  • Import Sheet      │  │  • Import Take/Lyrics│  │    Import Action   │  │
-│  └──────────┬───────────┘  └──────────┬───────────┘  └─────────┬──────────┘  │
-│             │                         │                        │             │
-│             ▼                         ▼                        ▼             │
-│  ┌────────────────────────────────────┐  ┌────────────────────────────────┐  │
-│  │            ExportScreen            │  │       ImportBottomSheet        │  │
-│  │  • Mode: Everything / Takes / Text │  │  • Auto-detects .zip/.songpad/ │  │
-│  │  • Scope: Full Song or Single Take │  │    .bin, audio/*, or .txt      │  │
-│  │  • Dynamic MIME SAF & Share Intent │  │  • Progress + Open Song CTA    │  │
-│  └─────────────────┬──────────────────┘  └────────────────┬───────────────┘  │
-└────────────────────┼──────────────────────────────────────┼──────────────────┘
-                     │                                      │
-                     ▼                                      ▼
-┌────────────────────────────────────────┐ ┌───────────────────────────────────┐
-│          Export Pipeline               │ │          Import Engine            │
-│                                        │ │                                   │
-│  ExportViewModel ──► ExportJobRunner   │ │  SongPadImporter (UseCase/Repo)   │
-│         │                              │ │    ├─ Zip/Bundle Inspector        │
-│         ▼                              │ │    │   (song.json + lyrics.txt)   │
-│    ExportWorker                        │ │    ├─ Standalone Audio Importer   │
-│    ├─ Direct .txt (Lyrics Only)        │ │    │   (M4A/FLAC/WAV/MP3 + Peaks) │
-│    ├─ Direct .mp3/.wav/.m4a/.flac      │ │    └─ Standalone .txt Parser      │
-│    │   (Single Take Export)            │ │        ([Section] tag detection)  │
-│    └─ Standard .zip (Multi-item Bundle)│ └────────────────┬──────────────────┘
-│         │                              │                  │
-│         ▼                              │                  ▼
-│  Native LAME JNI (libsongpad_lame.so)  │ ┌───────────────────────────────────┐
-│  • Vendored LAME 3.100 C sources       │ │   Room DB & TakeFileStore (IO)    │
-│  • 48 kHz mono, 192 kbps CBR MP3       │ │  • Song + Take + Audio/Midi Asset │
-└────────────────────────────────────────┘ │  • LyricsDocument + Sections      │
-                                           └───────────────────────────────────┘
+│  ImportBottomSheet ──► SongPadImporterImpl                                   │
+│                         ├─ readUpToNBytes(12)  [Replaces API 33 readNBytes]  │
+│                         ├─ Zip / Audio / Lyrics Inspector                    │
+│                         └─ PeakReducer + PcmDecoder Waveform Generator       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                 Capture, Transcode & Self-Healing Playback                   │
+│                                                                              │
+│  ┌──────────────────────────────┐      ┌──────────────────────────────────┐  │
+│  │  Oboe Capture & Piano Engine │      │   TranscodeWorker & PcmTranscoder│  │
+│  │  • PianoOutputStream closes  │      │   • FLAC writes fLaC + STREAMINFO│  │
+│  │    cleanly on disarm()       │─────►│   • AAC enforces monotonic PTS   │  │
+│  │  • Re-verifies stream state  │      │     & checks MediaMuxer.stop()   │  │
+│  │    when CaptureEngine starts │      │   • Container sniff verification │  │
+│  │  • SamplerTap primes cleanly │      │     before deleting audio.pcm    │  │
+│  └──────────────────────────────┘      └─────────────────┬────────────────┘  │
+│                                                          │                   │
+│                                                          ▼                   │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │               Media3PlaybackController & FlacHeaderRepair              │  │
+│  │  1. Inspects .flac takes: if "fLaC" magic is missing, prepends the     │  │
+│  │     42-byte fLaC + STREAMINFO header in-place & rebuilds peaks.wave    │  │
+│  │  2. If transcoded container is unreadable & audio.pcm exists, falls    │  │
+│  │     back to RawPcmDataSource (synthesized 44-byte WAV header)          │  │
+│  │  3. Resets ExoPlayer cleanly on error & emits PlaybackState.Error      │  │
+│  └──────────────────┬────────────────────────────────────┬────────────────┘  │
+│                     │                                    │                   │
+│                     ▼                                    ▼                   │
+│  ┌──────────────────────────────────┐  ┌──────────────────────────────────┐  │
+│  │          LibraryViewModel        │  │        SongDetailViewModel       │  │
+│  │  • Clears stuck Loading/Playing  │  │  • Displays inline error banner  │  │
+│  │  • Surfaces dismissible playback │  │  • Reloads repaired waveform     │  │
+│  │    error banner in LibraryScreen │  │    peaks automatically           │  │
+│  └──────────────────────────────────┘  └──────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 - **Data Model & State**:
-  - **`ExportRequest` & `ExportState.Success`**:
-    - Add optional `takeId: String? = null` to `ExportRequest` so exporting from a take's `•••` menu scopes the export to that single take (while allowing the user to toggle between "Selected take" and "All takes" on the Export screen).
-    - Add `mimeType: String` to `ExportState.Success` and `ExportJobStatus.Done` so `ExportScreen` launches `CreateDocument(mimeType)` and `Intent.ACTION_SEND` with the exact MIME type (`text/plain`, `audio/mpeg`, `audio/wav`, `audio/mp4`, `audio/flac`, or `application/zip`).
-  - **`SongBundleManifest` (`song.json`)**:
-    - Extend `SectionInfo` with `bodyText: String = ""` and `customLabel: String? = null`.
-    - Extend `NoteInfo` with `bodyText: String = ""`.
-    - Maintain backward compatibility (`ignoreUnknownKeys = true` and default values) so archives from earlier builds parse cleanly and fall back to `lyrics.txt` / `notes.txt` when `bodyText` in JSON is blank.
-  - **`ImportResult` & `SongPadImporter`**:
-    - `ImportResult.SongImported(songId, songName, takeCount, sectionCount, noteCount)`
-    - `ImportResult.TakeImported(takeId, takeName, songId)`
-    - `ImportResult.LyricsImported(documentId, songId, sectionCount)`
+  - **FLAC 42-Byte Stream Header Synthesis & Repair**:
+    - Standard FLAC stream marker: `4 bytes` (`"fLaC"`, `0x66 0x4C 0x61 0x43`), followed by a `4-byte` metadata block header (`0x80 0x00 0x00 0x22` — last-metadata-block flag `1`, type `0` = `STREAMINFO`, length `34` bytes) and `34-byte` `STREAMINFO` payload configured for `48,000 Hz`, `1 channel`, `16 bits per sample`, and total sample count derived from the source PCM length.
+  - **`LibraryState` Playback Error State**:
+    - Expose `playbackError: String?` (with `dismissPlaybackError()`) in `LibraryViewModel` so `LibraryScreen` renders an inline dismissible error banner whenever `PlaybackState.Error` occurs, rather than silently dropping the error or leaving `NowPlaying` stuck at `0:00`.
+  - **Playable Fallback for `FAILED` Transcodes**:
+    - Update `Take.isPlayable` and `Media3PlaybackController` so takes whose background transcode failed (leaving valid raw `audio.pcm` on disk) remain playable via `RawPcmDataSource`.
 
 - **Interactive Component & State Mapping**:
-  - **Direct vs. Zip Export Resolution**:
-    - `ExportMode.LYRICS_ONLY` → writes `<SongName>_Lyrics.txt` (`text/plain`) directly to `files/tmp/` without wrapping in a zip.
-    - Single take export (either `request.takeId != null` or `ExportMode.AUDIO_TAKES` with 1 take and no MIDI) → encodes/copies directly to `<SongName> - <TakeName>.<ext>` (`audio/mpeg`, `audio/wav`, `audio/mp4`, or `audio/flac`).
-    - `ExportMode.EVERYTHING` or multi-take `ExportMode.AUDIO_TAKES` → writes `Export_<SongName>_<yyyyMMdd-HHmm>.zip` (`application/zip`).
-  - **Universal Import Auto-Detection**:
-    - Inspects the first 4 magic bytes of the selected `Uri` stream: if it starts with `PK\x03\x04` (ZIP header), it processes it as a SongPad bundle regardless of whether the filename ends in `.zip`, `.songpad`, or `.bin`.
-    - If the MIME type or extension is audio (`.m4a`, `.mp3`, `.wav`, `.flac`, `.aac`, `.ogg`) or `RIFF` / `fLaC` / `ID3` / `ftyp` magic bytes are detected, it copies the audio into a new `takes/<takeId>/` directory, decodes/extracts duration and waveform `.peaks`, and commits a `READY` take (either unassigned or attached to the target `songId`).
-    - Otherwise, if valid UTF-8 text is detected (`.txt`), it parses section headers like `[Verse 1]`, `[Chorus]`, `[Bridge]` (or imports as a Verse section) into either the target song's `LyricsDocument` or a new standalone `LyricsDocument`.
+  - **Import Flow (`SongPadImporterImpl`)**:
+    - Replaces all `readNBytes` calls with `InputStream.readUpToNBytes(maxBytes)` so magic-byte detection and synthetic waveform fallback succeed on Android 8–12 (API 26–32).
+    - Also runs the FLAC header check when importing `.flac` takes from bundles so any bundle exported from a previously affected session repairs cleanly on import.
+  - **Capture & Piano Lifecycle (`PianoOutputStream`, `PianoSamplerEngineImpl`, `CaptureViewModel`)**:
+    - `PianoOutputStream::stop()` closes and resets the native Oboe stream (`closeLocked()`) instead of leaving an idle low-latency stream open on the HAL.
+    - When transitioning from `CaptureState.Ready` to `CaptureState.Recording` in `PIANO` or `VOICE_PIANO` mode, `CaptureViewModel` and `PianoSamplerEngineImpl` ensure the piano stream is actively running (`StreamState::Started`) and `SamplerTap` is freshly reset so no stale backlog or dead stream occurs.
+  - **Playback & Repair Flow (`Media3PlaybackController`, `LibraryViewModel`, `SongDetailViewModel`)**:
+    - When `play(source)` is invoked on a `.flac` file, `FlacHeaderRepair.ensureValidHeader(file)` checks the first 4 bytes and prepends the 42-byte `fLaC` + `STREAMINFO` header if missing.
+    - When `PeaksLoader` loads `peaks.wave` for a repaired take whose peaks were empty or all-zero, it decodes and writes `peaks.wave` so the `RibbonPlayer` displays the real waveform.

@@ -461,7 +461,8 @@ class SongDetailViewModel @Inject constructor(
 
     private fun loadPeaks(take: Take) {
         val path = take.audio?.peaksPath ?: return
-        if (peaksCache.containsKey(take.id)) return
+        val cached = peaksCache[take.id]
+        if (cached != null && cached.isNotEmpty() && cached.any { it > 0.0005f }) return
         viewModelScope.launch {
             val peaks = withContext(Dispatchers.IO) { runCatching { peaksLoader.load(path) }.getOrDefault(FloatArray(0)) }
             peaksCache[take.id] = peaks

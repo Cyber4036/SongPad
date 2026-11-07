@@ -20,7 +20,7 @@ data class Take(
     val meta: SyncMeta,
 ) {
     val isUnassigned: Boolean get() = songId == null
-    val isPlayable: Boolean get() = status == TakeStatus.READY || status == TakeStatus.TRANSCODING
+    val isPlayable: Boolean get() = status == TakeStatus.READY || status == TakeStatus.TRANSCODING || (status == TakeStatus.FAILED && audio != null)
 }
 
 /** Stored recording file and technical metadata (§6.1). `mimeType` carries the quality mode (§4.3). */

@@ -82,6 +82,7 @@ class LibraryViewModel @Inject constructor(
     private val filter = MutableStateFlow(SongFilter.ALL)
     private val peaksCache = HashMap<String, FloatArray>()
     private val peaksVersion = MutableStateFlow(0)
+    private val playbackErrorMsg = MutableStateFlow<String?>(null)
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -120,12 +121,19 @@ class LibraryViewModel @Inject constructor(
             playback.state, peaksVersion,
         ) { slice, p, _ -> slice to p },
         disclosure,
-    ) { (slice, p), disc ->
+        playbackErrorMsg,
+    ) { (slice, p), disc, errMsg ->
         val nowPlaying = nowPlayingFrom(slice.unassignedTakes, p)
+        val resolvedError = errMsg ?: (p as? PlaybackState.Error)?.let { errState ->
+            val failedTake = slice.unassignedTakes.firstOrNull { it.id == errState.source?.takeId }
+            if (failedTake != null) {
+                "Playback failed for \"${failedTake.name}\": ${errState.error.message}"
+            } else null
+        }
         when {
-            slice.filter != SongFilter.ALL -> LibraryState.Filtered(slice.filter, slice.songs, slice.unassignedTakes, disc, nowPlaying, slice.unassignedLyrics)
-            slice.songs.isEmpty() && slice.unassignedTakes.isEmpty() && slice.unassignedLyrics.isEmpty() -> LibraryState.EmptyLibrary(disc)
-            else -> LibraryState.Populated(slice.songs, slice.unassignedTakes, disc, nowPlaying, slice.unassignedLyrics)
+            slice.filter != SongFilter.ALL -> LibraryState.Filtered(slice.filter, slice.songs, slice.unassignedTakes, disc, nowPlaying, slice.unassignedLyrics, resolvedError)
+            slice.songs.isEmpty() && slice.unassignedTakes.isEmpty() && slice.unassignedLyrics.isEmpty() -> LibraryState.EmptyLibrary(disc, resolvedError)
+            else -> LibraryState.Populated(slice.songs, slice.unassignedTakes, disc, nowPlaying, slice.unassignedLyrics, resolvedError)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryState.Loading())
 
@@ -142,8 +150,15 @@ class LibraryViewModel @Inject constructor(
 
     // ── Playback of unassigned takes (§7.6 unified playback — Library is their only playback context) ──
     fun play(take: Take) {
-        val audio = take.audio ?: return
-        if (!take.isPlayable) return
+        val audio = take.audio ?: run {
+            playbackErrorMsg.value = "Playback failed for \"${take.name}\": audio file is missing."
+            return
+        }
+        if (!take.isPlayable) {
+            playbackErrorMsg.value = "Playback failed for \"${take.name}\": take is not available."
+            return
+        }
+        playbackErrorMsg.value = null
         val current = playback.state.value
         if (current.sourceOrNull?.takeId == take.id && current is PlaybackState.Paused) { playback.play(current.source); return }
         loadPeaks(take)
@@ -163,6 +178,13 @@ class LibraryViewModel @Inject constructor(
 
     fun dismissPlayer() = playback.stop()
 
+    fun dismissPlaybackError() {
+        playbackErrorMsg.value = null
+        if (playback.state.value is PlaybackState.Error) {
+            playback.stop()
+        }
+    }
+
     private fun nowPlayingFrom(unassigned: List<Take>, p: PlaybackState): NowPlaying? {
         val source = p.sourceOrNull as? PlaybackSource.CommittedTake ?: return null
         val take = unassigned.firstOrNull { it.id == source.takeId } ?: return null
@@ -172,7 +194,10 @@ class LibraryViewModel @Inject constructor(
             is PlaybackState.Paused -> NowPlaying(take, false, p.positionMs, p.durationMs.orTake(take), peaks)
             is PlaybackState.Loading -> NowPlaying(take, true, 0, take.durationMs, peaks)
             is PlaybackState.Ended -> NowPlaying(take, false, 0, p.durationMs.orTake(take), peaks)
-            is PlaybackState.Error -> null
+            is PlaybackState.Error -> {
+                playbackErrorMsg.value = "Playback failed for \"${take.name}\": ${p.error.message}"
+                null
+            }
             PlaybackState.Idle -> null
         }
     }
@@ -181,7 +206,8 @@ class LibraryViewModel @Inject constructor(
 
     private fun loadPeaks(take: Take) {
         val path = take.audio?.peaksPath ?: return
-        if (peaksCache.containsKey(take.id)) return
+        val cached = peaksCache[take.id]
+        if (cached != null && cached.isNotEmpty() && cached.any { it > 0.0005f }) return
         viewModelScope.launch {
             val peaks = withContext(Dispatchers.IO) { runCatching { peaksLoader.load(path) }.getOrDefault(FloatArray(0)) }
             peaksCache[take.id] = peaks

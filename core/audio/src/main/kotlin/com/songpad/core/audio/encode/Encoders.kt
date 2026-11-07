@@ -4,6 +4,7 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import com.songpad.core.audio.playback.RawPcmDataSource
+import com.songpad.core.audio.transcode.FlacHeader
 import com.songpad.core.model.export.ExportSource
 import com.songpad.core.model.take.AudioFormat
 import com.songpad.core.model.take.TakeFileStore
@@ -35,6 +36,9 @@ class PcmDecoder @Inject constructor(private val files: TakeFileStore) {
         if (source.mimeType == AudioFormat.MIME_RAW_PCM) return readRaw(file, onPcm, onProgress)
         if (source.mimeType == AudioFormat.MIME_WAV || file.name.endsWith(".wav", ignoreCase = true)) {
             return readWav(file, onPcm, onProgress)
+        }
+        if (source.mimeType == AudioFormat.MIME_FLAC || file.name.endsWith(".flac", ignoreCase = true)) {
+            FlacHeader.ensureValidFlacFile(file, fallbackDurationMs = source.durationMs)
         }
         val extractor = MediaExtractor()
         try {
@@ -204,7 +208,11 @@ class StoredCopyEncoder @Inject constructor(private val files: TakeFileStore) : 
     }
 
     override fun encode(source: ExportSource, out: OutputStream, onProgress: (Float) -> Unit) {
-        files.file(source.relativePath).inputStream().use { it.copyTo(out, 16 * 1024) }
+        val file = files.file(source.relativePath)
+        if (source.mimeType == AudioFormat.MIME_FLAC || file.name.endsWith(".flac", ignoreCase = true)) {
+            FlacHeader.ensureValidFlacFile(file, fallbackDurationMs = source.durationMs)
+        }
+        file.inputStream().use { it.copyTo(out, 16 * 1024) }
         onProgress(1f)
     }
 }

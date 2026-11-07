@@ -3,6 +3,8 @@ package com.songpad.feature.export.bundle
 import android.media.MediaMetadataRetriever
 import com.songpad.core.audio.capture.PeakReducer
 import com.songpad.core.audio.encode.PcmDecoder
+import com.songpad.core.audio.transcode.FlacHeader
+import com.songpad.core.audio.transcode.FlacHeader.readUpToNBytes
 import com.songpad.core.model.data.LyricsRepository
 import com.songpad.core.model.data.NoteRepository
 import com.songpad.core.model.data.SongRepository
@@ -245,6 +247,9 @@ class SongPadImporterImpl @Inject constructor(
                 }
             }
 
+            if (storedMime == AudioFormat.MIME_FLAC || dstFile.name.endsWith(".flac", ignoreCase = true)) {
+                FlacHeader.ensureValidFlacFile(dstFile, fallbackDurationMs = takeInfo.durationMs)
+            }
             val durationMs = takeInfo.durationMs.takeIf { it > 0L } ?: probeDurationMs(dstFile, storedMime)
             val peaksRel = generatePeaksForTake(newTakeId, storedRelPath, storedMime, durationMs, dstFile.length())
             val takeType = TakeType.entries.firstOrNull { it.name == takeInfo.type }
@@ -330,6 +335,9 @@ class SongPadImporterImpl @Inject constructor(
         val dstFile = files.file(storedRelPath)
         dstFile.parentFile?.mkdirs()
         tempFile.copyTo(dstFile, overwrite = true)
+        if (storedMime == AudioFormat.MIME_FLAC || dstFile.name.endsWith(".flac", ignoreCase = true)) {
+            FlacHeader.ensureValidFlacFile(dstFile)
+        }
 
         val durationMs = probeDurationMs(dstFile, storedMime).coerceAtLeast(1_000L)
         val peaksRel = generatePeaksForTake(newTakeId, storedRelPath, storedMime, durationMs, dstFile.length())
@@ -490,7 +498,7 @@ class SongPadImporterImpl @Inject constructor(
             // Fallback synthetic waveform from raw file bytes so imported takes in JVM tests or unsupported codecs still render peaks
             val syntheticSamples = ShortArray(48_000)
             val srcFile = files.file(storedRelPath)
-            val raw = runCatching { srcFile.inputStream().use { it.readNBytes(8192) } }.getOrDefault(ByteArray(0))
+            val raw = runCatching { srcFile.inputStream().use { it.readUpToNBytes(8192) } }.getOrDefault(ByteArray(0))
             for (i in syntheticSamples.indices) {
                 val b = if (raw.isNotEmpty()) raw[i % raw.size].toInt() else 32
                 syntheticSamples[i] = ((abs(b) * 180) % 24_000).toShort()
@@ -597,7 +605,7 @@ class SongPadImporterImpl @Inject constructor(
         }
 
         private fun readMagicBytes(file: File, count: Int): ByteArray =
-            file.inputStream().use { it.readNBytes(count) }
+            file.inputStream().use { it.readUpToNBytes(count) }
 
         private fun stripArchiveExtension(name: String): String =
             name.removeSuffix(".bin")

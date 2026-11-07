@@ -14,13 +14,18 @@ sealed interface LibraryState {
     val filter: SongFilter
     val disclosure: QualityDisclosureState
     val nowPlaying: NowPlaying?
+    val playbackError: String?
 
     data class Loading(override val filter: SongFilter = SongFilter.ALL) : LibraryState {
         override val disclosure get() = QualityDisclosureState.Hidden
         override val nowPlaying get(): NowPlaying? = null
+        override val playbackError get(): String? = null
     }
 
-    data class EmptyLibrary(override val disclosure: QualityDisclosureState) : LibraryState {
+    data class EmptyLibrary(
+        override val disclosure: QualityDisclosureState,
+        override val playbackError: String? = null,
+    ) : LibraryState {
         override val filter get() = SongFilter.ALL
         override val nowPlaying get(): NowPlaying? = null
     }
@@ -32,6 +37,7 @@ sealed interface LibraryState {
         override val disclosure: QualityDisclosureState,
         override val nowPlaying: NowPlaying?,
         val unassignedLyrics: List<LyricsDocument> = emptyList(),
+        override val playbackError: String? = null,
     ) : LibraryState {
         override val filter get() = SongFilter.ALL
     }
@@ -44,6 +50,7 @@ sealed interface LibraryState {
         override val disclosure: QualityDisclosureState,
         override val nowPlaying: NowPlaying?,
         val unassignedLyrics: List<LyricsDocument> = emptyList(),
+        override val playbackError: String? = null,
     ) : LibraryState
 }
 

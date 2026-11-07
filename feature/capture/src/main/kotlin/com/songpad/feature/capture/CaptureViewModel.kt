@@ -407,7 +407,10 @@ class CaptureViewModel @Inject constructor(
         val targetSongId = s.songId ?: _boundSongId.value
         startRecording(s.type, targetSongId)
             .onSuccess { session ->
-                if (session.type != TakeType.VOICE) midiBinder.beginTake(session.takeId)
+                if (session.type != TakeType.VOICE) {
+                    piano.arm(session.type)
+                    midiBinder.beginTake(session.takeId)
+                }
                 reduce { CaptureState.Recording(session, 0) }
             }
             .onFailure { t -> reduce { failedState(t.domainError, s.type, targetSongId) } }
@@ -429,7 +432,12 @@ class CaptureViewModel @Inject constructor(
         }
         if (playback.state.value.sourceOrNull?.takeId == session.takeId) playback.stop()
         engine.resume()
-            .onSuccess { reduce { CaptureState.Recording(session, elapsedMsOf(current)) } }
+            .onSuccess {
+                if (session.type != TakeType.VOICE) {
+                    piano.arm(session.type)
+                }
+                reduce { CaptureState.Recording(session, elapsedMsOf(current)) }
+            }
             .onFailure { t ->
                 logger.error(TAG, t.domainError)
                 emit(CaptureEffect.Message("Couldn't resume. Try again or save what you have."))

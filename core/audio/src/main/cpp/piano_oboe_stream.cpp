@@ -95,9 +95,27 @@ int32_t PianoOutputStream::start() {
 
 void PianoOutputStream::ensureRunningIfArmed() {
     if (!armed_.load(std::memory_order_acquire)) return;
-    if (!disconnected_.load(std::memory_order_acquire)) return;
+    bool needsRestart = disconnected_.load(std::memory_order_acquire);
+    if (!needsRestart) {
+        std::lock_guard<std::mutex> lock(streamMutex_);
+        if (!stream_) {
+            needsRestart = true;
+        } else {
+            auto st = stream_->getState();
+            if (st != oboe::StreamState::Started && st != oboe::StreamState::Starting) {
+                needsRestart = true;
+            }
+        }
+    }
+    if (!needsRestart) return;
+
     std::lock_guard<std::mutex> lock(streamMutex_);
-    if (!armed_.load(std::memory_order_acquire) || !disconnected_.load(std::memory_order_acquire)) return;
+    if (!armed_.load(std::memory_order_acquire)) return;
+    if (stream_ && !disconnected_.load(std::memory_order_acquire)) {
+        auto st = stream_->getState();
+        if (st == oboe::StreamState::Started || st == oboe::StreamState::Starting) return;
+        if (stream_->requestStart() == oboe::Result::OK) return;
+    }
     closeLocked();
     if (openLocked(false) == static_cast<int32_t>(oboe::Result::OK) && stream_) {
         stream_->requestStart();
@@ -107,12 +125,8 @@ void PianoOutputStream::ensureRunningIfArmed() {
 int32_t PianoOutputStream::stop() {
     std::lock_guard<std::mutex> lock(streamMutex_);
     armed_.store(false, std::memory_order_release);
-    if (!stream_) return static_cast<int32_t>(oboe::Result::OK);
-    if (disconnected_.load(std::memory_order_acquire)) {
-        closeLocked();
-        return static_cast<int32_t>(oboe::Result::OK);
-    }
-    return static_cast<int32_t>(stream_->requestStop());
+    closeLocked();
+    return static_cast<int32_t>(oboe::Result::OK);
 }
 
 void PianoOutputStream::close() {

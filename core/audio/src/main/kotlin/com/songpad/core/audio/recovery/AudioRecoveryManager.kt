@@ -1,7 +1,10 @@
 package com.songpad.core.audio.recovery
 
+import com.songpad.core.audio.transcode.FlacHeader
 import com.songpad.core.model.data.TakeRepository
 import com.songpad.core.model.take.OrphanedTake
+import com.songpad.core.model.take.TakeFileStore
+import com.songpad.core.model.take.TakePaths
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,7 +22,11 @@ import javax.inject.Singleton
  * manager only produces the state; the feature decides the surface.
  */
 @Singleton
-class AudioRecoveryManager @Inject constructor(private val takes: TakeRepository) {
+class AudioRecoveryManager @Inject constructor(
+    private val takes: TakeRepository,
+    private val files: TakeFileStore?,
+) {
+    constructor(takes: TakeRepository) : this(takes, null)
 
     sealed interface RecoveryState {
         data object None : RecoveryState
@@ -37,6 +44,16 @@ class AudioRecoveryManager @Inject constructor(private val takes: TakeRepository
         if (scanned) return
         scanned = true
         val orphans = withContext(Dispatchers.IO) {
+            files?.let { store ->
+                runCatching {
+                    for (takeDir in store.listTakeDirs()) {
+                        val flacFile = store.file(TakePaths.flac(takeDir.name))
+                        if (flacFile.exists() && flacFile.length() > 0L) {
+                            FlacHeader.ensureValidFlacFile(flacFile)
+                        }
+                    }
+                }
+            }
             val found = takes.findOrphaned()
             found.filter { it.hasDbRow }.forEach { takes.markOrphaned(it.takeId) }
             found
