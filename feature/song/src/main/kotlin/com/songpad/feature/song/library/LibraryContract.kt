@@ -15,6 +15,8 @@ sealed interface LibraryState {
     val disclosure: QualityDisclosureState
     val nowPlaying: NowPlaying?
     val playbackError: String?
+    val isTakeSelectionMode: Boolean get() = false
+    val selectedTakeIds: Set<String> get() = emptySet()
 
     data class Loading(override val filter: SongFilter = SongFilter.ALL) : LibraryState {
         override val disclosure get() = QualityDisclosureState.Hidden
@@ -38,6 +40,8 @@ sealed interface LibraryState {
         override val nowPlaying: NowPlaying?,
         val unassignedLyrics: List<LyricsDocument> = emptyList(),
         override val playbackError: String? = null,
+        override val isTakeSelectionMode: Boolean = false,
+        override val selectedTakeIds: Set<String> = emptySet(),
     ) : LibraryState {
         override val filter get() = SongFilter.ALL
     }
@@ -51,20 +55,27 @@ sealed interface LibraryState {
         override val nowPlaying: NowPlaying?,
         val unassignedLyrics: List<LyricsDocument> = emptyList(),
         override val playbackError: String? = null,
+        override val isTakeSelectionMode: Boolean = false,
+        override val selectedTakeIds: Set<String> = emptySet(),
     ) : LibraryState
 }
 
 sealed interface LibrarySheet {
     data object None : LibrarySheet
+    /** Options sheet for an unassigned take (`⋮` button or long-press). */
+    data class UnfiledTakeOptions(val take: Take) : LibrarySheet
     /** Phase 0 §24.3: "Add to Song" for an unassigned take — existing songs, or a new one. */
     data class AssignTake(val take: Take, val songs: List<Song>) : LibrarySheet
     data class NewSongForTake(val take: Take) : LibrarySheet
+    data class RenameUnfiledTake(val take: Take) : LibrarySheet
     data class ConfirmDeleteTake(val take: Take) : LibrarySheet
-    /** Standalone lyrics sheets: assign to song, create new song, edit standalone lyrics, rename, or delete. */
+    data class ConfirmDeleteTakes(val takes: List<Take>) : LibrarySheet
+    /** Standalone lyrics sheets: options, assign to song, create new song, edit standalone lyrics, rename, or delete. */
+    data class UnfiledLyricsOptions(val document: LyricsDocument) : LibrarySheet
     data class AssignLyrics(val document: LyricsDocument, val songs: List<Song>) : LibrarySheet
     data class NewSongForLyrics(val document: LyricsDocument) : LibrarySheet
     data class EditStandaloneLyrics(val documentId: String) : LibrarySheet
-    data class RenameStandaloneLyrics(val document: LyricsDocument) : LibrarySheet
+    data class RenameStandaloneLyrics(val document: LyricsDocument, val returnToEditor: Boolean = true) : LibrarySheet
     data class ConfirmDeleteStandaloneLyrics(val document: LyricsDocument) : LibrarySheet
     /** Song card `•••` options sheet (Capture.html §Songs). */
     data class SongOptions(val song: Song) : LibrarySheet

@@ -3,9 +3,11 @@ package com.songpad.feature.song.library
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +57,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -100,8 +103,10 @@ import com.songpad.core.ui.components.UnfiledTakeRow
 import com.songpad.core.ui.components.UnfiledTakesContainer
 import com.songpad.core.ui.icons.SongPadIcons
 import com.songpad.core.ui.theme.Radii
+import com.songpad.core.ui.theme.SongPadFonts
 import com.songpad.core.ui.theme.SongPadTheme
 import com.songpad.core.ui.theme.Spacing
+import com.songpad.feature.song.detail.BatchTakeSelectionBottomBar
 import com.songpad.feature.song.detail.NowPlaying
 import java.text.DateFormat
 import java.util.Date
@@ -126,6 +131,8 @@ fun LibraryScreen(
     val query by viewModel.searchQuery.collectAsStateWithLifecycle()
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    BackHandler(enabled = state.isTakeSelectionMode) { viewModel.exitTakeSelectionMode() }
 
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
@@ -212,41 +219,87 @@ fun LibraryScreen(
                         onAction = onRecord,
                         modifier = Modifier.weight(1f),
                     )
-                    is LibraryState.Populated -> SongList(s.songs, s.unassignedTakes, s.unassignedLyrics, s.nowPlaying, s.filter, onOpenSong, viewModel, Modifier.weight(1f))
-                    is LibraryState.Filtered -> SongList(s.songs, s.unassignedTakes, s.unassignedLyrics, s.nowPlaying, s.filter, onOpenSong, viewModel, Modifier.weight(1f))
+                    is LibraryState.Populated -> SongList(s.songs, s.unassignedTakes, s.unassignedLyrics, s.nowPlaying, s.filter, s.isTakeSelectionMode, s.selectedTakeIds, onOpenSong, viewModel, Modifier.weight(1f))
+                    is LibraryState.Filtered -> SongList(s.songs, s.unassignedTakes, s.unassignedLyrics, s.nowPlaying, s.filter, s.isTakeSelectionMode, s.selectedTakeIds, onOpenSong, viewModel, Modifier.weight(1f))
                 }
             }
 
-            state.nowPlaying?.let { np ->
-                RibbonPlayer(
-                    title = np.take.name,
-                    subtitle = np.take.type.label(),
-                    isPlaying = np.isPlaying,
-                    progress = np.progress,
-                    positionLabel = "${DurationFormat.mmss(np.positionMs)} / ${DurationFormat.mmss(np.durationMs)}",
-                    peaks = np.peaks,
-                    onPlayPause = { viewModel.togglePlayPause(np.take) },
-                    onSeek = viewModel::seekTo,
-                    onDismiss = viewModel::dismissPlayer,
+            if (state.isTakeSelectionMode) {
+                BatchTakeSelectionBottomBar(
+                    selectedCount = state.selectedTakeIds.size,
+                    onCancel = viewModel::exitTakeSelectionMode,
+                    onDelete = viewModel::requestDeleteSelectedTakes,
                 )
+            } else {
+                state.nowPlaying?.let { np ->
+                    RibbonPlayer(
+                        title = np.take.name,
+                        subtitle = np.take.type.label(),
+                        isPlaying = np.isPlaying,
+                        progress = np.progress,
+                        positionLabel = "${DurationFormat.mmss(np.positionMs)} / ${DurationFormat.mmss(np.durationMs)}",
+                        peaks = np.peaks,
+                        onPlayPause = { viewModel.togglePlayPause(np.take) },
+                        onSeek = viewModel::seekTo,
+                        onDismiss = viewModel::dismissPlayer,
+                    )
+                }
             }
         }
 
         // Floating Lyrics (higher) and Piano (lower) quick-launch icons in the lower-right corner above the bottom bar
-        com.songpad.core.ui.components.CaptureQuickActions(
-            onLaunchLyrics = onLaunchLyrics,
-            onLaunchPiano = onLaunchPiano,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(
-                    end = 18.dp,
-                    bottom = if (state.nowPlaying != null) 76.dp else 16.dp,
-                ),
-        )
+        if (!state.isTakeSelectionMode) {
+            com.songpad.core.ui.components.CaptureQuickActions(
+                onLaunchLyrics = onLaunchLyrics,
+                onLaunchPiano = onLaunchPiano,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(
+                        end = 18.dp,
+                        bottom = if (state.nowPlaying != null) 76.dp else 16.dp,
+                    ),
+            )
+        }
     }
 
     when (val sh = sheet) {
         LibrarySheet.None -> Unit
+        is LibrarySheet.UnfiledTakeOptions -> {
+            val isPlaying = state.nowPlaying?.take?.id == sh.take.id && state.nowPlaying?.isPlaying == true
+            SongPadBottomSheet(
+                onDismiss = viewModel::closeSheet,
+                title = sh.take.name,
+                subtitle = "${sh.take.type.label()} · ${DurationFormat.mmss(sh.take.durationMs)} · ${sh.take.meta.createdAt.relativeTimeLabel()}",
+            ) {
+                SheetOptionRow(
+                    label = if (isPlaying) "Pause" else "Play",
+                    onClick = { viewModel.togglePlayPause(sh.take); viewModel.closeSheet() },
+                )
+                SheetOptionRow(
+                    label = "Add to a song…",
+                    accent = true,
+                    onClick = { viewModel.openAssignSheet(sh.take) },
+                )
+                SheetOptionRow(
+                    label = "Rename",
+                    onClick = { viewModel.openRenameUnfiledTake(sh.take) },
+                )
+                SheetOptionRow(
+                    label = "Duplicate",
+                    onClick = { viewModel.duplicateUnfiledTake(sh.take.id) },
+                )
+                SheetOptionRow(
+                    label = "Select multiple…",
+                    onClick = { viewModel.enterTakeSelectionMode(sh.take.id) },
+                    modifier = Modifier.testTag("unfiled_take_options_select_multiple"),
+                )
+                SheetOptionRow(
+                    label = "Delete take",
+                    destructive = true,
+                    onClick = { viewModel.requestDeleteTake(sh.take) },
+                )
+            }
+        }
         is LibrarySheet.AssignTake -> SongPadBottomSheet(
             onDismiss = viewModel::closeSheet,
             title = "Add to song",
@@ -264,6 +317,11 @@ fun LibraryScreen(
                     onClick = { viewModel.assignTake(sh.take.id, song.id) },
                 )
             }
+            SheetOptionRow(
+                label = "Delete take",
+                destructive = true,
+                onClick = { viewModel.requestDeleteTake(sh.take) },
+            )
         }
         is LibrarySheet.NewSongForTake -> TextInputDialog(
             title = "New song",
@@ -273,6 +331,14 @@ fun LibraryScreen(
             onConfirm = { name -> viewModel.createSongForTake(name, sh.take.id, onOpenSong) },
             onDismiss = viewModel::closeSheet,
         )
+        is LibrarySheet.RenameUnfiledTake -> TextInputDialog(
+            title = "Rename take",
+            label = "Take name",
+            initialValue = sh.take.name,
+            confirmLabel = "Rename",
+            onConfirm = { name -> viewModel.renameUnfiledTake(sh.take.id, name) },
+            onDismiss = viewModel::closeSheet,
+        )
         is LibrarySheet.ConfirmDeleteTake -> ConfirmDialog(
             title = "Delete \"${sh.take.name}\"?",
             body = "The take is removed from your library. Its file is purged after 7 days.",
@@ -280,6 +346,40 @@ fun LibraryScreen(
             onConfirm = { viewModel.deleteTake(sh.take.id) },
             onDismiss = viewModel::closeSheet,
         )
+        is LibrarySheet.ConfirmDeleteTakes -> {
+            val count = sh.takes.size
+            ConfirmDialog(
+                title = "Delete $count take${if (count == 1) "" else "s"}?",
+                body = "Selected takes are removed from your library. Their files are purged after 7 days.",
+                confirmLabel = "Delete $count",
+                onConfirm = viewModel::confirmDeleteSelectedTakes,
+                onDismiss = viewModel::closeSheet,
+            )
+        }
+        is LibrarySheet.UnfiledLyricsOptions -> SongPadBottomSheet(
+            onDismiss = viewModel::closeSheet,
+            title = sh.document.name,
+            subtitle = "Unfiled lyrics · ${sh.document.nonEmptySectionCount.coerceAtLeast(1)} section${if (sh.document.nonEmptySectionCount.coerceAtLeast(1) == 1) "" else "s"}",
+        ) {
+            SheetOptionRow(
+                label = "Edit lyrics",
+                onClick = { viewModel.openStandaloneLyrics(sh.document.id) },
+            )
+            SheetOptionRow(
+                label = "Add to a song…",
+                accent = true,
+                onClick = { viewModel.openAssignLyricsSheet(sh.document) },
+            )
+            SheetOptionRow(
+                label = "Rename lyrics",
+                onClick = { viewModel.openRenameStandaloneLyrics(sh.document, returnToEditor = false) },
+            )
+            SheetOptionRow(
+                label = "Delete lyrics",
+                destructive = true,
+                onClick = { viewModel.requestDeleteStandaloneLyrics(sh.document) },
+            )
+        }
         is LibrarySheet.AssignLyrics -> SongPadBottomSheet(
             onDismiss = viewModel::closeSheet,
             title = "Add to song",
@@ -297,6 +397,11 @@ fun LibraryScreen(
                     onClick = { viewModel.assignLyrics(sh.document.id, song.id) },
                 )
             }
+            SheetOptionRow(
+                label = "Delete lyrics",
+                destructive = true,
+                onClick = { viewModel.requestDeleteStandaloneLyrics(sh.document) },
+            )
         }
         is LibrarySheet.NewSongForLyrics -> TextInputDialog(
             title = "New song",
@@ -315,7 +420,7 @@ fun LibraryScreen(
                     onAddSection = { viewModel.insertStandaloneSection(currentDoc.id, SectionTag.VERSE, null) },
                     onDeleteSection = viewModel::deleteStandaloneSection,
                     onAssignToSong = { viewModel.openAssignLyricsSheet(currentDoc) },
-                    onRename = { viewModel.openRenameStandaloneLyrics(currentDoc) },
+                    onRename = { viewModel.openRenameStandaloneLyrics(currentDoc, returnToEditor = true) },
                     onDelete = { viewModel.requestDeleteStandaloneLyrics(currentDoc) },
                     onDismiss = viewModel::closeSheet,
                 )
@@ -326,7 +431,7 @@ fun LibraryScreen(
             label = "Lyrics name",
             initialValue = sh.document.name,
             confirmLabel = "Rename",
-            onConfirm = { name -> viewModel.renameStandaloneLyrics(sh.document.id, name) },
+            onConfirm = { name -> viewModel.renameStandaloneLyrics(sh.document.id, name, returnToEditor = sh.returnToEditor) },
             onDismiss = viewModel::closeSheet,
         )
         is LibrarySheet.ConfirmDeleteStandaloneLyrics -> ConfirmDialog(
@@ -868,11 +973,14 @@ private fun SongList(
     unassignedLyrics: List<LyricsDocument>,
     nowPlaying: NowPlaying?,
     filter: SongFilter,
+    isTakeSelectionMode: Boolean,
+    selectedTakeIds: Set<String>,
     onOpenSong: (String) -> Unit,
     vm: LibraryViewModel,
     modifier: Modifier,
 ) {
     val c = SongPadTheme.colors
+    val allUnfiledSelected = unassigned.isNotEmpty() && unassigned.all { it.id in selectedTakeIds }
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = Spacing.screen, vertical = 4.dp),
@@ -880,7 +988,61 @@ private fun SongList(
     ) {
         if ((unassigned.isNotEmpty() || unassignedLyrics.isNotEmpty()) && filter == SongFilter.ALL) {
             item(key = "unassigned-container") {
-                UnfiledTakesContainer {
+                UnfiledTakesContainer(
+                    headerAction = if (unassigned.isNotEmpty()) {
+                        {
+                            if (isTakeSelectionMode) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(
+                                        text = "${selectedTakeIds.size} selected",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 11.sp,
+                                        ),
+                                        color = c.accent800,
+                                        modifier = Modifier.testTag("unfiled_selection_count"),
+                                    )
+                                    Surface(
+                                        onClick = vm::selectAllUnfiledTakes,
+                                        shape = RoundedCornerShape(Radii.pill),
+                                        color = if (allUnfiledSelected) c.accent else c.surface,
+                                        contentColor = if (allUnfiledSelected) c.onAccent else c.accent800,
+                                        modifier = Modifier.testTag("unfiled_select_all_button"),
+                                    ) {
+                                        Text(
+                                            text = if (allUnfiledSelected) "Deselect all" else "Select all",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 11.sp,
+                                            ),
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        )
+                                    }
+                                }
+                            } else {
+                                Surface(
+                                    onClick = { vm.enterTakeSelectionMode() },
+                                    shape = RoundedCornerShape(Radii.pill),
+                                    color = c.surface.copy(alpha = 0.72f),
+                                    contentColor = c.accent800,
+                                    modifier = Modifier.testTag("unfiled_select_mode_button"),
+                                ) {
+                                    Text(
+                                        text = "Select",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 11.sp,
+                                        ),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    )
+                                }
+                            }
+                        }
+                    } else null,
+                ) {
                     unassigned.forEach { take ->
                         UnfiledTakeRow(
                             name = take.name,
@@ -888,24 +1050,34 @@ private fun SongList(
                             isPlaying = nowPlaying?.take?.id == take.id && nowPlaying.isPlaying,
                             onPlayPause = { vm.togglePlayPause(take) },
                             onAssignToSong = { vm.openAssignSheet(take) },
+                            onMoreClick = { vm.openUnfiledTakeOptions(take) },
+                            onLongClick = { vm.openUnfiledTakeOptions(take) },
+                            selectionMode = isTakeSelectionMode,
+                            selected = take.id in selectedTakeIds,
+                            onSelect = { vm.toggleTakeSelection(take.id) },
+                            modifier = Modifier.testTag("unfiled_take_row_${take.id}"),
                         )
                     }
-                    unassignedLyrics.forEach { doc ->
-                        val sectionCount = doc.nonEmptySectionCount.coerceAtLeast(1)
-                        val sectionLabel = "$sectionCount section${if (sectionCount == 1) "" else "s"}"
-                        val snippet = doc.previewSnippet
-                        val metaLine = buildString {
-                            append(sectionLabel)
-                            if (snippet.isNotEmpty()) append(" · \"$snippet\"")
-                            append(" · ")
-                            append(doc.meta.updatedAt.relativeTimeLabel())
+                    if (!isTakeSelectionMode) {
+                        unassignedLyrics.forEach { doc ->
+                            val sectionCount = doc.nonEmptySectionCount.coerceAtLeast(1)
+                            val sectionLabel = "$sectionCount section${if (sectionCount == 1) "" else "s"}"
+                            val snippet = doc.previewSnippet
+                            val metaLine = buildString {
+                                append(sectionLabel)
+                                if (snippet.isNotEmpty()) append(" · \"$snippet\"")
+                                append(" · ")
+                                append(doc.meta.updatedAt.relativeTimeLabel())
+                            }
+                            UnfiledLyricsRow(
+                                name = doc.name,
+                                metaLine = metaLine,
+                                onClick = { vm.openStandaloneLyrics(doc.id) },
+                                onAssignToSong = { vm.openAssignLyricsSheet(doc) },
+                                onMoreClick = { vm.openUnfiledLyricsOptions(doc) },
+                                onLongClick = { vm.openUnfiledLyricsOptions(doc) },
+                            )
                         }
-                        UnfiledLyricsRow(
-                            name = doc.name,
-                            metaLine = metaLine,
-                            onClick = { vm.openStandaloneLyrics(doc.id) },
-                            onAssignToSong = { vm.openAssignLyricsSheet(doc) },
-                        )
                     }
                 }
             }

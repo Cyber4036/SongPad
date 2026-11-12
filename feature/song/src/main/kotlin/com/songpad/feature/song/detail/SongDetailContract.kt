@@ -28,6 +28,14 @@ sealed interface TakeListState {
     data class Unavailable(override val filter: TakeFilter, val takes: List<Take>, val takeId: String, val reason: String) : TakeListState
 }
 
+fun TakeListState.takesOrEmpty(): List<Take> = when (this) {
+    is TakeListState.Empty -> emptyList()
+    is TakeListState.Populated -> takes
+    is TakeListState.Playing -> takes
+    is TakeListState.Transcoding -> takes
+    is TakeListState.Unavailable -> takes
+}
+
 data class NowPlaying(
     val take: Take,
     val isPlaying: Boolean,
@@ -69,6 +77,8 @@ sealed interface SongDetailState {
         val lyrics: LyricsState,
         val notes: NotesState,
         val nowPlaying: NowPlaying?,
+        val isTakeSelectionMode: Boolean = false,
+        val selectedTakeIds: Set<String> = emptySet(),
     ) : SongDetailState
 }
 
@@ -79,8 +89,11 @@ sealed interface SongDetailDialog {
     data class RenameTake(val take: Take) : SongDetailDialog
     data class MoveTake(val take: Take, val songs: List<Song>) : SongDetailDialog
     data class ConfirmDeleteTake(val take: Take) : SongDetailDialog
+    data class ConfirmDeleteTakes(val takes: List<Take>) : SongDetailDialog
+    data class SectionOptions(val section: Section) : SongDetailDialog
     data class RetagSection(val section: Section) : SongDetailDialog
     data class ConfirmDeleteSection(val sectionId: String, val label: String) : SongDetailDialog
+    data class NoteOptions(val note: Note) : SongDetailDialog
     data class ConfirmDeleteNote(val noteId: String) : SongDetailDialog
     data object ConfirmDeleteSong : SongDetailDialog
     data class Import(

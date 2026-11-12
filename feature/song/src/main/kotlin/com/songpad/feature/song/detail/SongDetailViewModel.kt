@@ -83,6 +83,7 @@ class SongDetailViewModel @Inject constructor(
     /** True while a voice note is capturing — the screen must not be left then (see [SongDetailScreen]). */
     val recordingVoiceNote: StateFlow<Boolean> = notesUi.map { it is NotesUi.Recording }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     private val unavailable = MutableStateFlow<Pair<String, String>?>(null)
+    private val takeSelection = MutableStateFlow<Set<String>?>(null)
     private val peaksCache = HashMap<String, FloatArray>()
     private val peaksVersion = MutableStateFlow(0)
 
@@ -120,9 +121,9 @@ class SongDetailViewModel @Inject constructor(
 
     val state: StateFlow<SongDetailState> = combine(
         combine(detail, tab, takeFilter, playback.state, peaksVersion) { d, t, f, p, _ -> Quad(d, t, f, p) },
-        lyricsUi, notesUi, unavailable,
-    ) { (d, t, f, p), lu, nu, un ->
-        if (d == null) SongDetailState.NotFound else build(d, t, f, p, lu, nu, un)
+        lyricsUi, notesUi, unavailable, takeSelection,
+    ) { (d, t, f, p), lu, nu, un, sel ->
+        if (d == null) SongDetailState.NotFound else build(d, t, f, p, lu, nu, un, sel)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SongDetailState.Loading)
 
     private data class Quad(val detail: SongDetail?, val tab: SongDetailTab, val filter: TakeFilter, val playback: PlaybackState)
@@ -132,11 +133,15 @@ class SongDetailViewModel @Inject constructor(
         if (songId.value == id) return
         songId.value = id
         tab.value = initialTab
+        takeSelection.value = null
     }
 
     fun selectTab(t: SongDetailTab) {
         if (tab.value == SongDetailTab.LYRICS && t != SongDetailTab.LYRICS) {
             flushPendingLyricsEdits()
+        }
+        if (t != SongDetailTab.TAKES) {
+            takeSelection.value = null
         }
         tab.value = t
     }
@@ -253,6 +258,67 @@ class SongDetailViewModel @Inject constructor(
     fun deleteTake(takeId: String) = viewModelScope.launch {
         if (playback.state.value.sourceOrNull?.takeId == takeId) playback.stop()
         takes.softDelete(takeId).report()
+        closeDialog()
+    }
+
+    fun enterTakeSelectionMode(initialTakeId: String? = null) {
+        tab.value = SongDetailTab.TAKES
+        takeSelection.value = if (initialTakeId != null) setOf(initialTakeId) else emptySet()
+        closeDialog()
+    }
+
+    fun toggleTakeSelection(takeId: String) {
+        val current = takeSelection.value ?: return
+        takeSelection.value = if (takeId in current) current - takeId else current + takeId
+    }
+
+    fun selectAllVisibleTakes() {
+        val loaded = state.value as? SongDetailState.Loaded ?: return
+        val visibleIds = loaded.takes.takesOrEmpty().mapTo(LinkedHashSet()) { it.id }
+        val current = takeSelection.value ?: emptySet()
+        takeSelection.value = if (visibleIds.isNotEmpty() && visibleIds.all { it in current }) {
+            emptySet()
+        } else {
+            visibleIds
+        }
+    }
+
+    fun clearTakeSelection() {
+        if (takeSelection.value != null) {
+            takeSelection.value = emptySet()
+        }
+    }
+
+    fun exitTakeSelectionMode() {
+        takeSelection.value = null
+    }
+
+    fun requestDeleteSelectedTakes() {
+        val loaded = state.value as? SongDetailState.Loaded ?: return
+        val selected = loaded.selectedTakeIds
+        if (selected.isEmpty()) return
+        val toDelete = loaded.takes.takesOrEmpty().filter { it.id in selected }
+        if (toDelete.isEmpty()) return
+        _dialog.value = SongDetailDialog.ConfirmDeleteTakes(toDelete)
+    }
+
+    fun confirmDeleteSelectedTakes() = viewModelScope.launch {
+        val ids = takeSelection.value.orEmpty()
+        if (ids.isEmpty()) {
+            takeSelection.value = null
+            closeDialog()
+            return@launch
+        }
+        if (playback.state.value.sourceOrNull?.takeId in ids) {
+            playback.stop()
+        }
+        if (unavailable.value?.first in ids) {
+            unavailable.value = null
+        }
+        ids.forEach { id ->
+            takes.softDelete(id).report()
+        }
+        takeSelection.value = null
         closeDialog()
     }
 
@@ -412,8 +478,20 @@ class SongDetailViewModel @Inject constructor(
 
     // ── internals ──
 
-    private fun build(d: SongDetail, t: SongDetailTab, f: TakeFilter, p: PlaybackState, lu: LyricsUi, nu: NotesUi, un: Pair<String, String>?): SongDetailState.Loaded {
+    private fun build(
+        d: SongDetail,
+        t: SongDetailTab,
+        f: TakeFilter,
+        p: PlaybackState,
+        lu: LyricsUi,
+        nu: NotesUi,
+        un: Pair<String, String>?,
+        sel: Set<String>?,
+    ): SongDetailState.Loaded {
         val filtered = d.takes.filter { f.type == null || it.type == f.type }
+        val visibleIds = filtered.mapTo(HashSet()) { it.id }
+        val inSelectionMode = sel != null && t == SongDetailTab.TAKES && filtered.isNotEmpty()
+        val selectedIds = if (inSelectionMode) sel!!.intersect(visibleIds) else emptySet()
         val nowPlaying = nowPlayingFrom(d, p)
         val transcoding = filtered.filter { it.status == TakeStatus.TRANSCODING }.map { it.id }.toSet()
         val takeState: TakeListState = when {
@@ -440,7 +518,7 @@ class SongDetailViewModel @Inject constructor(
             NotesUi.Saved -> NotesState.Saved(d.notes)
             NotesUi.Idle -> if (d.notes.isEmpty()) NotesState.Empty() else NotesState.Saved(d.notes)
         }
-        return SongDetailState.Loaded(d.song, t, d.recentActivity, takeState, lyricsState, notesState, nowPlaying)
+        return SongDetailState.Loaded(d.song, t, d.recentActivity, takeState, lyricsState, notesState, nowPlaying, inSelectionMode, selectedIds)
     }
 
     private fun nowPlayingFrom(d: SongDetail, p: PlaybackState): NowPlaying? {

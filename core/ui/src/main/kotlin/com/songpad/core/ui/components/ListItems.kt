@@ -1,7 +1,11 @@
 package com.songpad.core.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -41,7 +46,7 @@ import com.songpad.core.ui.theme.SongPadFonts
 import com.songpad.core.ui.theme.SongPadTheme
 import com.songpad.core.ui.theme.Spacing
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun SongListItem(
     name: String,
@@ -55,15 +60,22 @@ fun SongListItem(
     lyricLabel: String? = null,
     statusTone: TagTone = TagTone.Accent2,
     onMoreClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = onMoreClick,
 ) {
     val c = SongPadTheme.colors
+    val shape = RoundedCornerShape(Radii.lg)
     Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(Radii.lg),
+        shape = shape,
         color = c.surface,
         contentColor = c.text,
         shadowElevation = 2.dp,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
@@ -141,6 +153,7 @@ fun SongListItem(
 @Composable
 fun UnfiledTakesContainer(
     modifier: Modifier = Modifier,
+    headerAction: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = SongPadTheme.colors
@@ -155,20 +168,28 @@ fun UnfiledTakesContainer(
             modifier = Modifier.padding(horizontal = 15.dp, vertical = 13.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
-            Text(
-                "UNFILED — NICE CATCH",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = 10.5.sp,
-                    letterSpacing = 1.1.sp,
-                    fontWeight = FontWeight.SemiBold,
-                ),
-                color = c.accent800,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    "UNFILED — NICE CATCH",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 10.5.sp,
+                        letterSpacing = 1.1.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = c.accent800,
+                )
+                headerAction?.invoke()
+            }
             content()
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun UnfiledTakeRow(
     name: String,
@@ -177,29 +198,179 @@ fun UnfiledTakeRow(
     onPlayPause: () -> Unit,
     onAssignToSong: () -> Unit,
     modifier: Modifier = Modifier,
+    onMoreClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = onMoreClick,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onSelect: () -> Unit = onPlayPause,
+) {
+    val c = SongPadTheme.colors
+    val rowContent: @Composable () -> Unit = {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (selectionMode) {
+                        Modifier
+                            .defaultMinSize(minHeight = 48.dp)
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    } else {
+                        Modifier
+                    },
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (selectionMode) {
+                SelectionCircleIndicator(
+                    selected = selected,
+                    contentDescription = if (selected) "Selected $name" else "Select $name",
+                    size = 28.dp,
+                )
+            } else {
+                Surface(
+                    onClick = onPlayPause,
+                    shape = CircleShape,
+                    color = c.accent,
+                    contentColor = c.bg,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            if (isPlaying) SongPadIcons.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause $name" else "Play $name",
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .then(
+                        if (selectionMode) {
+                            Modifier.padding(vertical = 2.dp)
+                        } else {
+                            Modifier
+                                .clip(RoundedCornerShape(Radii.sm))
+                                .combinedClickable(
+                                    onClick = onPlayPause,
+                                    onLongClick = onLongClick ?: onMoreClick,
+                                )
+                                .padding(vertical = 2.dp)
+                        },
+                    ),
+            ) {
+                Text(
+                    name,
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontFamily = SongPadFonts.heading,
+                        fontWeight = FontWeight.Normal,
+                        fontSize = 15.sp,
+                    ),
+                    color = c.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    metaLine,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = c.text.copy(alpha = 0.60f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (!selectionMode) {
+                PrimaryButton(
+                    text = "Add to a song",
+                    onClick = onAssignToSong,
+                    compact = true,
+                )
+                if (onMoreClick != null) {
+                    Surface(
+                        onClick = onMoreClick,
+                        shape = CircleShape,
+                        color = Color.Transparent,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.MoreVert,
+                                contentDescription = "Options for $name",
+                                tint = c.text.copy(alpha = 0.65f),
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (selectionMode) {
+        Surface(
+            shape = RoundedCornerShape(Radii.md),
+            color = if (selected) c.surface else Color.Transparent,
+            border = BorderStroke(
+                width = if (selected) 1.5.dp else 1.dp,
+                color = if (selected) c.accent else c.accent.copy(alpha = 0.28f),
+            ),
+            modifier = modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(Radii.md))
+                .clickable(onClick = onSelect),
+        ) {
+            rowContent()
+        }
+    } else {
+        Box(modifier = modifier.fillMaxWidth()) {
+            rowContent()
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun UnfiledLyricsRow(
+    name: String,
+    metaLine: String,
+    onClick: () -> Unit,
+    onAssignToSong: () -> Unit,
+    modifier: Modifier = Modifier,
+    onMoreClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = onMoreClick,
 ) {
     val c = SongPadTheme.colors
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Surface(
-            onClick = onPlayPause,
+            onClick = onClick,
             shape = CircleShape,
-            color = c.accent,
+            color = c.accent2,
             contentColor = c.bg,
             modifier = Modifier.size(32.dp),
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    if (isPlaying) SongPadIcons.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause $name" else "Play $name",
+                    imageVector = SongPadIcons.Lyrics,
+                    contentDescription = "Open $name",
                     modifier = Modifier.size(15.dp),
                 )
             }
         }
-        Column(Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(Radii.sm))
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick ?: onMoreClick,
+                )
+                .padding(vertical = 2.dp),
+        ) {
             Text(
                 name,
                 style = MaterialTheme.typography.titleSmall.copy(
@@ -224,74 +395,27 @@ fun UnfiledTakeRow(
             onClick = onAssignToSong,
             compact = true,
         )
+        if (onMoreClick != null) {
+            Surface(
+                onClick = onMoreClick,
+                shape = CircleShape,
+                color = Color.Transparent,
+                modifier = Modifier.size(32.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "Options for $name",
+                        tint = c.text.copy(alpha = 0.65f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
     }
 }
 
-@Composable
-fun UnfiledLyricsRow(
-    name: String,
-    metaLine: String,
-    onClick: () -> Unit,
-    onAssignToSong: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val c = SongPadTheme.colors
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Surface(
-            onClick = onClick,
-            shape = CircleShape,
-            color = c.accent2,
-            contentColor = c.bg,
-            modifier = Modifier.size(32.dp),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = SongPadIcons.Lyrics,
-                    contentDescription = "Open $name",
-                    modifier = Modifier.size(15.dp),
-                )
-            }
-        }
-        Surface(
-            onClick = onClick,
-            color = Color.Transparent,
-            contentColor = c.text,
-            shape = RoundedCornerShape(Radii.sm),
-            modifier = Modifier.weight(1f),
-        ) {
-            Column {
-                Text(
-                    name,
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        fontFamily = SongPadFonts.heading,
-                        fontWeight = FontWeight.Normal,
-                        fontSize = 15.sp,
-                    ),
-                    color = c.text,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    metaLine,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                    color = c.text.copy(alpha = 0.60f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        PrimaryButton(
-            text = "Add to a song",
-            onClick = onAssignToSong,
-            compact = true,
-        )
-    }
-}
-
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TakeListItem(
     name: String,
@@ -304,21 +428,40 @@ fun TakeListItem(
     onClick: () -> Unit,
     onPlay: () -> Unit,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = SongPadTheme.colors
-    val cardBg = if (isPlaying) c.accent100 else c.surface
+    val cardBg = when {
+        selectionMode && selected -> c.accent100
+        !selectionMode && isPlaying -> c.accent100
+        else -> c.surface
+    }
+    val border = when {
+        selectionMode && selected -> BorderStroke(1.5.dp, c.accent)
+        selectionMode -> BorderStroke(1.dp, c.divider)
+        else -> null
+    }
     val typeTone = when {
         typeLabel.contains("Voice") && typeLabel.contains("Piano") -> TagTone.Outline
         typeLabel.contains("Piano") -> TagTone.Accent2
         else -> TagTone.Accent
     }
+    val shape = RoundedCornerShape(Radii.card)
     Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(Radii.card),
+        shape = shape,
         color = cardBg,
         contentColor = c.text,
-        modifier = modifier.fillMaxWidth(),
+        border = border,
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = if (selectionMode) null else onLongClick,
+            ),
     ) {
         Row(
             Modifier
@@ -327,19 +470,27 @@ fun TakeListItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(11.dp),
         ) {
-            Surface(
-                onClick = onPlay,
-                shape = CircleShape,
-                color = c.accent,
-                contentColor = c.bg,
-                modifier = Modifier.size(34.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        icon = if (isPlaying) SongPadIcons.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play $name",
-                        modifier = Modifier.size(16.dp),
-                    )
+            if (selectionMode) {
+                SelectionCircleIndicator(
+                    selected = selected,
+                    contentDescription = if (selected) "Selected $name" else "Select $name",
+                    size = 34.dp,
+                )
+            } else {
+                Surface(
+                    onClick = onPlay,
+                    shape = CircleShape,
+                    color = c.accent,
+                    contentColor = c.bg,
+                    modifier = Modifier.size(34.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            icon = if (isPlaying) SongPadIcons.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play $name",
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -364,7 +515,39 @@ fun TakeListItem(
                 }
             }
             TagChip(typeLabel, tone = typeTone)
-            trailing?.invoke()
+            if (!selectionMode) {
+                trailing?.invoke()
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectionCircleIndicator(
+    selected: Boolean,
+    contentDescription: String,
+    size: androidx.compose.ui.unit.Dp,
+) {
+    val c = SongPadTheme.colors
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(if (selected) c.accent else Color.Transparent)
+            .border(
+                width = if (selected) 0.dp else 1.5.dp,
+                color = if (selected) Color.Transparent else c.textTertiary,
+                shape = CircleShape,
+            ),
+    ) {
+        if (selected) {
+            androidx.compose.material3.Icon(
+                imageVector = SongPadIcons.Check,
+                contentDescription = contentDescription,
+                tint = c.onAccent,
+                modifier = Modifier.size(size * 0.54f),
+            )
         }
     }
 }

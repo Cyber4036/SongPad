@@ -40,9 +40,11 @@ import com.songpad.feature.song.detail.LyricsState
 import com.songpad.feature.song.detail.NotesState
 import com.songpad.feature.song.detail.SongDetailDialog
 import com.songpad.feature.song.detail.SongDetailState
+import com.songpad.feature.song.detail.SongDetailTab
 import com.songpad.feature.song.detail.SongDetailViewModel
 import com.songpad.feature.song.detail.TakeFilter
 import com.songpad.feature.song.detail.TakeListState
+import com.songpad.feature.song.library.LibrarySheet
 import com.songpad.feature.song.library.LibraryState
 import com.songpad.feature.song.library.LibraryViewModel
 import kotlinx.coroutines.Dispatchers
@@ -387,5 +389,106 @@ class SongViewModelsTest {
         vm.moveTake(take.id, song2.id); advanceUntilIdle()
         assertThat(takes.getTake(take.id)!!.songId).isEqualTo(song2.id)
         assertThat(vm.dialog.value).isEqualTo(SongDetailDialog.None)
+    }
+
+    @Test
+    fun `detail - take selection mode selects multiple takes and batch deletes while stopping playback`() = runTest(dispatcher) {
+        val song = songs.create("Batch Song").getOrThrow()
+        val t1 = commitTake(song.id, "Voice 1", type = TakeType.VOICE)
+        val t2 = commitTake(song.id, "Voice 2", type = TakeType.VOICE)
+        val t3 = commitTake(song.id, "Piano 1", type = TakeType.PIANO)
+        val vm = detail()
+        subscribe(vm.state, vm.dialog)
+        vm.bind(song.id); advanceUntilIdle()
+
+        vm.play(t2); advanceUntilIdle()
+        assertThat(playback.state.value).isInstanceOf(com.songpad.core.model.audio.PlaybackState.Playing::class.java)
+
+        vm.enterTakeSelectionMode(t1.id); advanceUntilIdle()
+        var loaded = vm.state.value as SongDetailState.Loaded
+        assertThat(loaded.tab).isEqualTo(SongDetailTab.TAKES)
+        assertThat(loaded.isTakeSelectionMode).isTrue()
+        assertThat(loaded.selectedTakeIds).containsExactly(t1.id)
+
+        vm.toggleTakeSelection(t2.id); advanceUntilIdle()
+        loaded = vm.state.value as SongDetailState.Loaded
+        assertThat(loaded.selectedTakeIds).containsExactly(t1.id, t2.id)
+
+        vm.selectAllVisibleTakes(); advanceUntilIdle()
+        assertThat((vm.state.value as SongDetailState.Loaded).selectedTakeIds).containsExactly(t1.id, t2.id, t3.id)
+
+        vm.selectAllVisibleTakes(); advanceUntilIdle()
+        assertThat((vm.state.value as SongDetailState.Loaded).selectedTakeIds).isEmpty()
+
+        vm.toggleTakeSelection(t1.id)
+        vm.toggleTakeSelection(t2.id)
+        advanceUntilIdle()
+
+        vm.requestDeleteSelectedTakes(); advanceUntilIdle()
+        val confirm = vm.dialog.value as SongDetailDialog.ConfirmDeleteTakes
+        assertThat(confirm.takes.map { it.id }).containsExactly(t1.id, t2.id)
+
+        vm.confirmDeleteSelectedTakes(); advanceUntilIdle()
+        assertThat(vm.dialog.value).isEqualTo(SongDetailDialog.None)
+        assertThat(playback.state.value).isEqualTo(com.songpad.core.model.audio.PlaybackState.Idle)
+        assertThat(takes.getTake(t1.id)).isNull()
+        assertThat(takes.getTake(t2.id)).isNull()
+        assertThat(takes.getTake(t3.id)).isNotNull()
+
+        loaded = vm.state.value as SongDetailState.Loaded
+        assertThat(loaded.isTakeSelectionMode).isFalse()
+        assertThat(loaded.selectedTakeIds).isEmpty()
+
+        // Switching away from Takes exits selection mode cleanly.
+        vm.enterTakeSelectionMode(t3.id); advanceUntilIdle()
+        assertThat((vm.state.value as SongDetailState.Loaded).isTakeSelectionMode).isTrue()
+        vm.selectTab(SongDetailTab.HOME); advanceUntilIdle()
+        assertThat((vm.state.value as SongDetailState.Loaded).isTakeSelectionMode).isFalse()
+    }
+
+    @Test
+    fun `library - unfiled take selection mode selects multiple takes and batch deletes`() = runTest(dispatcher) {
+        val u1 = commitTake(null, "Unfiled 1", type = TakeType.VOICE)
+        val u2 = commitTake(null, "Unfiled 2", type = TakeType.VOICE)
+        val u3 = commitTake(null, "Unfiled 3", type = TakeType.PIANO)
+        val vm = library()
+        subscribe(vm.state, vm.sheet)
+        advanceUntilIdle()
+
+        vm.play(u1); advanceUntilIdle()
+        assertThat(playback.state.value).isInstanceOf(com.songpad.core.model.audio.PlaybackState.Playing::class.java)
+
+        vm.enterTakeSelectionMode(u1.id); advanceUntilIdle()
+        var populated = vm.state.value as LibraryState.Populated
+        assertThat(populated.isTakeSelectionMode).isTrue()
+        assertThat(populated.selectedTakeIds).containsExactly(u1.id)
+
+        vm.toggleTakeSelection(u2.id); advanceUntilIdle()
+        assertThat((vm.state.value as LibraryState.Populated).selectedTakeIds).containsExactly(u1.id, u2.id)
+
+        vm.selectAllUnfiledTakes(); advanceUntilIdle()
+        assertThat((vm.state.value as LibraryState.Populated).selectedTakeIds).containsExactly(u1.id, u2.id, u3.id)
+
+        vm.selectAllUnfiledTakes(); advanceUntilIdle()
+        assertThat((vm.state.value as LibraryState.Populated).selectedTakeIds).isEmpty()
+
+        vm.toggleTakeSelection(u1.id)
+        vm.toggleTakeSelection(u3.id)
+        advanceUntilIdle()
+
+        vm.requestDeleteSelectedTakes(); advanceUntilIdle()
+        val confirm = vm.sheet.value as LibrarySheet.ConfirmDeleteTakes
+        assertThat(confirm.takes.map { it.id }).containsExactly(u1.id, u3.id)
+
+        vm.confirmDeleteSelectedTakes(); advanceUntilIdle()
+        assertThat(vm.sheet.value).isEqualTo(LibrarySheet.None)
+        assertThat(playback.state.value).isEqualTo(com.songpad.core.model.audio.PlaybackState.Idle)
+        assertThat(takes.getTake(u1.id)).isNull()
+        assertThat(takes.getTake(u3.id)).isNull()
+        assertThat(takes.getTake(u2.id)).isNotNull()
+
+        populated = vm.state.value as LibraryState.Populated
+        assertThat(populated.isTakeSelectionMode).isFalse()
+        assertThat(populated.unassignedTakes.map { it.id }).containsExactly(u2.id)
     }
 }

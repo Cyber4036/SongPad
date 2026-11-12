@@ -83,6 +83,7 @@ class LibraryViewModel @Inject constructor(
     private val peaksCache = HashMap<String, FloatArray>()
     private val peaksVersion = MutableStateFlow(0)
     private val playbackErrorMsg = MutableStateFlow<String?>(null)
+    private val takeSelection = MutableStateFlow<Set<String>?>(null)
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -122,7 +123,8 @@ class LibraryViewModel @Inject constructor(
         ) { slice, p, _ -> slice to p },
         disclosure,
         playbackErrorMsg,
-    ) { (slice, p), disc, errMsg ->
+        takeSelection,
+    ) { (slice, p), disc, errMsg, sel ->
         val nowPlaying = nowPlayingFrom(slice.unassignedTakes, p)
         val resolvedError = errMsg ?: (p as? PlaybackState.Error)?.let { errState ->
             val failedTake = slice.unassignedTakes.firstOrNull { it.id == errState.source?.takeId }
@@ -130,10 +132,13 @@ class LibraryViewModel @Inject constructor(
                 "Playback failed for \"${failedTake.name}\": ${errState.error.message}"
             } else null
         }
+        val validUnassignedIds = slice.unassignedTakes.mapTo(HashSet()) { it.id }
+        val inSelectionMode = sel != null && slice.filter == SongFilter.ALL && slice.unassignedTakes.isNotEmpty()
+        val selectedIds = if (inSelectionMode) sel!!.intersect(validUnassignedIds) else emptySet()
         when {
-            slice.filter != SongFilter.ALL -> LibraryState.Filtered(slice.filter, slice.songs, slice.unassignedTakes, disc, nowPlaying, slice.unassignedLyrics, resolvedError)
+            slice.filter != SongFilter.ALL -> LibraryState.Filtered(slice.filter, slice.songs, slice.unassignedTakes, disc, nowPlaying, slice.unassignedLyrics, resolvedError, inSelectionMode, selectedIds)
             slice.songs.isEmpty() && slice.unassignedTakes.isEmpty() && slice.unassignedLyrics.isEmpty() -> LibraryState.EmptyLibrary(disc, resolvedError)
-            else -> LibraryState.Populated(slice.songs, slice.unassignedTakes, disc, nowPlaying, slice.unassignedLyrics, resolvedError)
+            else -> LibraryState.Populated(slice.songs, slice.unassignedTakes, disc, nowPlaying, slice.unassignedLyrics, resolvedError, inSelectionMode, selectedIds)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryState.Loading())
 
@@ -144,7 +149,12 @@ class LibraryViewModel @Inject constructor(
         val unassignedLyrics: List<LyricsDocument>,
     )
 
-    fun setFilter(f: SongFilter) { filter.value = f }
+    fun setFilter(f: SongFilter) {
+        if (f != SongFilter.ALL) {
+            takeSelection.value = null
+        }
+        filter.value = f
+    }
     fun setSearchQuery(q: String) { _searchQuery.value = q }
     fun clearSearch() { _searchQuery.value = "" }
 
@@ -245,16 +255,34 @@ class LibraryViewModel @Inject constructor(
     }
 
     // ── Unassigned take sheet actions ──
+    fun openUnfiledTakeOptions(take: Take) {
+        _sheet.value = LibrarySheet.UnfiledTakeOptions(take)
+    }
+
     fun openAssignSheet(take: Take) = viewModelScope.launch {
         val candidates = songs.observeSongs(SongFilter.ALL).first()
         _sheet.value = LibrarySheet.AssignTake(take, candidates)
     }
 
     fun openNewSongForTake(take: Take) { _sheet.value = LibrarySheet.NewSongForTake(take) }
+    fun openRenameUnfiledTake(take: Take) { _sheet.value = LibrarySheet.RenameUnfiledTake(take) }
     fun requestDeleteTake(take: Take) { _sheet.value = LibrarySheet.ConfirmDeleteTake(take) }
     fun closeSheet() {
         flushStandaloneLyricsEdits()
         _sheet.value = LibrarySheet.None
+    }
+
+    fun renameUnfiledTake(takeId: String, name: String) = viewModelScope.launch {
+        val trimmed = name.trim()
+        if (trimmed.isNotEmpty()) {
+            takes.rename(takeId, trimmed).report()
+        }
+        closeSheet()
+    }
+
+    fun duplicateUnfiledTake(takeId: String) = viewModelScope.launch {
+        takes.duplicate(takeId).report()
+        closeSheet()
     }
 
     fun assignTake(takeId: String, songId: String) = viewModelScope.launch {
@@ -270,6 +298,66 @@ class LibraryViewModel @Inject constructor(
     /** §9.2 two-phase deletion, step 1: release the player before the row is soft-deleted. */
     fun deleteTake(takeId: String) = viewModelScope.launch { stopIfPlaying(takeId); takes.softDelete(takeId).report(); closeSheet() }
 
+    fun enterTakeSelectionMode(initialTakeId: String? = null) {
+        filter.value = SongFilter.ALL
+        takeSelection.value = if (initialTakeId != null) setOf(initialTakeId) else emptySet()
+        _sheet.value = LibrarySheet.None
+    }
+
+    fun toggleTakeSelection(takeId: String) {
+        val current = takeSelection.value ?: return
+        takeSelection.value = if (takeId in current) current - takeId else current + takeId
+    }
+
+    fun selectAllUnfiledTakes() {
+        val unassigned = when (val s = state.value) {
+            is LibraryState.Populated -> s.unassignedTakes
+            is LibraryState.Filtered -> s.unassignedTakes
+            else -> emptyList()
+        }
+        val visibleIds = unassigned.mapTo(LinkedHashSet()) { it.id }
+        val current = takeSelection.value ?: emptySet()
+        takeSelection.value = if (visibleIds.isNotEmpty() && visibleIds.all { it in current }) {
+            emptySet()
+        } else {
+            visibleIds
+        }
+    }
+
+    fun exitTakeSelectionMode() {
+        takeSelection.value = null
+    }
+
+    fun requestDeleteSelectedTakes() {
+        val unassigned = when (val s = state.value) {
+            is LibraryState.Populated -> s.unassignedTakes
+            is LibraryState.Filtered -> s.unassignedTakes
+            else -> emptyList()
+        }
+        val selected = state.value.selectedTakeIds
+        if (selected.isEmpty()) return
+        val toDelete = unassigned.filter { it.id in selected }
+        if (toDelete.isEmpty()) return
+        _sheet.value = LibrarySheet.ConfirmDeleteTakes(toDelete)
+    }
+
+    fun confirmDeleteSelectedTakes() = viewModelScope.launch {
+        val ids = takeSelection.value.orEmpty()
+        if (ids.isEmpty()) {
+            takeSelection.value = null
+            closeSheet()
+            return@launch
+        }
+        if (playback.state.value.sourceOrNull?.takeId in ids) {
+            playback.stop()
+        }
+        ids.forEach { id ->
+            takes.softDelete(id).report()
+        }
+        takeSelection.value = null
+        closeSheet()
+    }
+
     private fun stopIfPlaying(takeId: String) { if (playback.state.value.sourceOrNull?.takeId == takeId) playback.stop() }
 
     // ── Unassigned standalone lyrics sheet & editor actions ──
@@ -283,6 +371,11 @@ class LibraryViewModel @Inject constructor(
 
     fun observeStandaloneLyrics(documentId: String): Flow<LyricsDocument?> =
         lyrics?.observeDocumentById(documentId) ?: flowOf(null)
+
+    fun openUnfiledLyricsOptions(doc: LyricsDocument) {
+        flushStandaloneLyricsEdits()
+        _sheet.value = LibrarySheet.UnfiledLyricsOptions(doc)
+    }
 
     fun openStandaloneLyrics(documentId: String) {
         _sheet.value = LibrarySheet.EditStandaloneLyrics(documentId)
@@ -299,9 +392,9 @@ class LibraryViewModel @Inject constructor(
         _sheet.value = LibrarySheet.NewSongForLyrics(doc)
     }
 
-    fun openRenameStandaloneLyrics(doc: LyricsDocument) {
+    fun openRenameStandaloneLyrics(doc: LyricsDocument, returnToEditor: Boolean = true) {
         flushStandaloneLyricsEdits()
-        _sheet.value = LibrarySheet.RenameStandaloneLyrics(doc)
+        _sheet.value = LibrarySheet.RenameStandaloneLyrics(doc, returnToEditor = returnToEditor)
     }
 
     fun requestDeleteStandaloneLyrics(doc: LyricsDocument) {
@@ -320,9 +413,13 @@ class LibraryViewModel @Inject constructor(
         closeSheet()
     }
 
-    fun renameStandaloneLyrics(documentId: String, name: String) = viewModelScope.launch {
+    fun renameStandaloneLyrics(documentId: String, name: String, returnToEditor: Boolean = true) = viewModelScope.launch {
         lyrics?.renameDocument(documentId, name.trim())?.report()
-        _sheet.value = LibrarySheet.EditStandaloneLyrics(documentId)
+        if (returnToEditor) {
+            _sheet.value = LibrarySheet.EditStandaloneLyrics(documentId)
+        } else {
+            closeSheet()
+        }
     }
 
     fun deleteStandaloneLyrics(documentId: String) = viewModelScope.launch {

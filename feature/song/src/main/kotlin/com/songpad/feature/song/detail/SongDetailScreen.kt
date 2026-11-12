@@ -8,9 +8,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -78,6 +81,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -168,15 +172,21 @@ fun SongDetailScreen(
             viewModel.flushPendingLyricsEdits()
         }
     }
-    val recordingVoiceNote by viewModel.recordingVoiceNote.collectAsStateWithLifecycle()
-    BackHandler(enabled = recordingVoiceNote) { viewModel.stopVoiceNote() }
-    val guardedBack = {
-        viewModel.flushPendingLyricsEdits()
-        if (recordingVoiceNote) viewModel.stopVoiceNote() else onBack()
-    }
-    LaunchedEffect(Unit) { viewModel.navigateToLibrary.collect { onBack() } }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dialog by viewModel.dialog.collectAsStateWithLifecycle()
+    val isTakeSelectionMode = (state as? SongDetailState.Loaded)?.isTakeSelectionMode == true
+    val recordingVoiceNote by viewModel.recordingVoiceNote.collectAsStateWithLifecycle()
+    BackHandler(enabled = recordingVoiceNote) { viewModel.stopVoiceNote() }
+    BackHandler(enabled = !recordingVoiceNote && isTakeSelectionMode) { viewModel.exitTakeSelectionMode() }
+    val guardedBack = {
+        viewModel.flushPendingLyricsEdits()
+        when {
+            recordingVoiceNote -> viewModel.stopVoiceNote()
+            isTakeSelectionMode -> viewModel.exitTakeSelectionMode()
+            else -> onBack()
+        }
+    }
+    LaunchedEffect(Unit) { viewModel.navigateToLibrary.collect { onBack() } }
     val c = SongPadTheme.colors
     var scrollTarget by remember(songId) { mutableStateOf(targetId) }
     fun navigateToRef(tab: SongDetailTab, id: String) { viewModel.selectTab(tab); scrollTarget = id }
@@ -336,6 +346,8 @@ fun SongDetailScreen(
                             onRecord = { onRecord(s.song.id) },
                             scrollTarget = scrollTarget,
                             onScrolled = { scrollTarget = null },
+                            selectionMode = s.isTakeSelectionMode,
+                            selectedTakeIds = s.selectedTakeIds,
                         )
                         SongDetailTab.NOTES -> NotesTab(
                             state = s.notes,
@@ -350,23 +362,31 @@ fun SongDetailScreen(
                     }
                 }
 
-                s.nowPlaying?.let { np ->
-                    RibbonPlayer(
-                        title = np.take.name,
-                        subtitle = np.take.type.label(),
-                        isPlaying = np.isPlaying,
-                        progress = np.progress,
-                        positionLabel = "${DurationFormat.mmss(np.positionMs)} / ${DurationFormat.mmss(np.durationMs)}",
-                        peaks = np.peaks,
-                        onPlayPause = { viewModel.togglePlayPause(np.take) },
-                        onSeek = viewModel::seekTo,
-                        onDismiss = viewModel::dismissPlayer,
+                if (s.isTakeSelectionMode && s.tab == SongDetailTab.TAKES) {
+                    BatchTakeSelectionBottomBar(
+                        selectedCount = s.selectedTakeIds.size,
+                        onCancel = viewModel::exitTakeSelectionMode,
+                        onDelete = viewModel::requestDeleteSelectedTakes,
                     )
+                } else {
+                    s.nowPlaying?.let { np ->
+                        RibbonPlayer(
+                            title = np.take.name,
+                            subtitle = np.take.type.label(),
+                            isPlaying = np.isPlaying,
+                            progress = np.progress,
+                            positionLabel = "${DurationFormat.mmss(np.positionMs)} / ${DurationFormat.mmss(np.durationMs)}",
+                            peaks = np.peaks,
+                            onPlayPause = { viewModel.togglePlayPause(np.take) },
+                            onSeek = viewModel::seekTo,
+                            onDismiss = viewModel::dismissPlayer,
+                        )
+                    }
                 }
             }
 
-                // Persistent Record FAB + Quick-Launch Lyrics/Piano stack on Song Detail (hidden on Notes tab, when RibbonPlayer is open, or when keyboard is open)
-                val fabVisible = s.tab != SongDetailTab.NOTES && s.nowPlaying == null && !isImeVisible
+                // Persistent Record FAB + Quick-Launch Lyrics/Piano stack on Song Detail (hidden on Notes tab, when RibbonPlayer is open, when keyboard is open, or during take batch selection)
+                val fabVisible = s.tab != SongDetailTab.NOTES && s.nowPlaying == null && !isImeVisible && !s.isTakeSelectionMode
                 if (fabVisible) {
                     Column(
                         modifier = Modifier
@@ -424,6 +444,11 @@ fun SongDetailScreen(
                     onClick = { viewModel.openMoveTakeDialog(d.take) },
                 )
                 SheetOptionRow(
+                    label = "Select multiple…",
+                    onClick = { viewModel.enterTakeSelectionMode(d.take.id) },
+                    modifier = Modifier.testTag("take_options_select_multiple"),
+                )
+                SheetOptionRow(
                     label = "Delete take",
                     destructive = true,
                     onClick = { viewModel.showDialog(SongDetailDialog.ConfirmDeleteTake(d.take)) },
@@ -446,13 +471,84 @@ fun SongDetailScreen(
                 Text("No other songs available.", Modifier.padding(Spacing.lg), color = c.textSecondary)
             }
         }
+        is SongDetailDialog.SectionOptions -> SongPadBottomSheet(
+            onDismiss = viewModel::closeDialog,
+            title = d.section.displayLabel,
+            subtitle = d.section.bodyText.lineSequence().firstOrNull()?.takeIf { it.isNotBlank() } ?: "Empty lyric section",
+        ) {
+            SheetOptionRow(
+                label = "Edit in Lyrics",
+                onClick = {
+                    viewModel.closeDialog()
+                    navigateToRef(SongDetailTab.LYRICS, d.section.id)
+                },
+            )
+            SheetOptionRow(
+                label = "Change section tag…",
+                onClick = { viewModel.showDialog(SongDetailDialog.RetagSection(d.section)) },
+            )
+            SheetOptionRow(
+                label = "Delete section",
+                destructive = true,
+                onClick = { viewModel.showDialog(SongDetailDialog.ConfirmDeleteSection(d.section.id, d.section.displayLabel)) },
+            )
+        }
         is SongDetailDialog.RetagSection -> SectionTagBottomSheet(
             title = "Section tag",
             activeTag = d.section.tag,
             onSelectTag = { tag, custom -> viewModel.retagSection(d.section.id, tag, custom) },
             onDismiss = viewModel::closeDialog,
         )
+        is SongDetailDialog.NoteOptions -> (state as? SongDetailState.Loaded)?.let { s ->
+            val voiceTake = d.note.voiceTakeId?.let { vid -> s.takes.takesOrEmpty().firstOrNull { it.id == vid } }
+            val isPlayingVoice = voiceTake != null && s.nowPlaying?.take?.id == voiceTake.id && s.nowPlaying.isPlaying
+            val noteTitle = d.note.bodyText.ifBlank { if (d.note.voiceTakeId != null) "Voice note" else "Photo note" }
+            SongPadBottomSheet(
+                onDismiss = viewModel::closeDialog,
+                title = noteTitle,
+                subtitle = "Note · ${d.note.meta.updatedAt.relativeTimeLabel()}",
+            ) {
+                if (voiceTake != null) {
+                    SheetOptionRow(
+                        label = if (isPlayingVoice) "Pause voice note" else "Play voice note",
+                        onClick = { viewModel.togglePlayPause(voiceTake); viewModel.closeDialog() },
+                    )
+                }
+                SheetOptionRow(
+                    label = "View in Notes",
+                    onClick = {
+                        viewModel.closeDialog()
+                        navigateToRef(SongDetailTab.NOTES, d.note.id)
+                    },
+                )
+                if (d.note.voiceTakeId == null) {
+                    SheetOptionRow(
+                        label = "Edit note",
+                        onClick = {
+                            viewModel.closeDialog()
+                            viewModel.selectTab(SongDetailTab.NOTES)
+                            viewModel.composeNote(d.note.bodyText, d.note.id)
+                        },
+                    )
+                }
+                SheetOptionRow(
+                    label = "Delete note",
+                    destructive = true,
+                    onClick = { viewModel.showDialog(SongDetailDialog.ConfirmDeleteNote(d.note.id)) },
+                )
+            }
+        }
         is SongDetailDialog.ConfirmDeleteTake -> ConfirmDialog("Delete \"${d.take.name}\"?", "The take is removed from this song. Its file is purged after 7 days.", "Delete", onConfirm = { viewModel.deleteTake(d.take.id) }, onDismiss = viewModel::closeDialog)
+        is SongDetailDialog.ConfirmDeleteTakes -> {
+            val count = d.takes.size
+            ConfirmDialog(
+                title = "Delete $count take${if (count == 1) "" else "s"}?",
+                body = "Selected takes are removed from this song. Their files are purged after 7 days.",
+                confirmLabel = "Delete $count",
+                onConfirm = viewModel::confirmDeleteSelectedTakes,
+                onDismiss = viewModel::closeDialog,
+            )
+        }
         is SongDetailDialog.ConfirmDeleteSection -> ConfirmDialog("Delete ${d.label}?", "Its lyrics are removed. This can't be undone.", "Delete", onConfirm = { viewModel.deleteSection(d.sectionId) }, onDismiss = viewModel::closeDialog)
         is SongDetailDialog.ConfirmDeleteNote -> ConfirmDialog("Delete note?", "This can't be undone.", "Delete", onConfirm = { viewModel.deleteNote(d.noteId) }, onDismiss = viewModel::closeDialog)
         SongDetailDialog.ConfirmDeleteSong -> ConfirmDialog("Delete this song?", "Takes, lyrics and notes go with it. Files are purged after 7 days.", "Delete song", onConfirm = viewModel::deleteSong, onDismiss = viewModel::closeDialog)
@@ -540,6 +636,7 @@ private fun HomeTab(
                         title = "${a.take.name} · ${DurationFormat.mmss(a.take.durationMs)}",
                         subtitle = "${a.take.type.label()} · ${a.take.meta.createdAt.relativeTimeLabel()}",
                         onClick = { vm.togglePlayPause(a.take) },
+                        onMoreClick = { vm.showDialog(SongDetailDialog.TakeOptions(a.take)) },
                     )
                     is SongActivity.SectionEdited -> ActivityFeedCard(
                         badgeText = "LYR",
@@ -548,6 +645,7 @@ private fun HomeTab(
                         title = a.section.displayLabel,
                         subtitle = a.section.bodyText.lineSequence().firstOrNull()?.takeIf { it.isNotBlank() } ?: "(empty)",
                         onClick = { onSelectTab(SongDetailTab.LYRICS) },
+                        onMoreClick = { vm.showDialog(SongDetailDialog.SectionOptions(a.section)) },
                     )
                     is SongActivity.NoteAdded -> ActivityFeedCard(
                         badgeText = "NTE",
@@ -556,6 +654,7 @@ private fun HomeTab(
                         title = a.note.bodyText.ifBlank { if (a.note.voiceTakeId != null) "Voice note" else "Photo note" },
                         subtitle = "Note · ${a.note.meta.updatedAt.relativeTimeLabel()}",
                         onClick = { onSelectTab(SongDetailTab.NOTES) },
+                        onMoreClick = { vm.showDialog(SongDetailDialog.NoteOptions(a.note)) },
                     )
                 }
             }
@@ -563,6 +662,7 @@ private fun HomeTab(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ActivityFeedCard(
     badgeText: String,
@@ -571,14 +671,22 @@ private fun ActivityFeedCard(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
+    onMoreClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = onMoreClick,
 ) {
     val c = SongPadTheme.colors
+    val shape = RoundedCornerShape(Radii.card)
     Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(Radii.card),
+        shape = shape,
         color = c.surface,
         border = BorderStroke(1.dp, c.divider),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 15.dp, vertical = 13.dp),
@@ -619,6 +727,23 @@ private fun ActivityFeedCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            if (onMoreClick != null) {
+                Surface(
+                    onClick = onMoreClick,
+                    shape = CircleShape,
+                    color = Color.Transparent,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = "Options for $title",
+                            tint = c.textSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -630,7 +755,13 @@ private fun SongActivity.key() = when (this) {
 }
 
 @Composable
-private fun TakeRow(take: Take, nowPlaying: NowPlaying?, vm: SongDetailViewModel) {
+private fun TakeRow(
+    take: Take,
+    nowPlaying: NowPlaying?,
+    vm: SongDetailViewModel,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+) {
     val c = SongPadTheme.colors
     TakeListItem(
         name = take.name,
@@ -640,8 +771,16 @@ private fun TakeRow(take: Take, nowPlaying: NowPlaying?, vm: SongDetailViewModel
         metaLine = take.meta.createdAt.relativeTimeLabel(),
         statusBadge = take.statusBadge(),
         isPlaying = nowPlaying?.take?.id == take.id && nowPlaying.isPlaying,
-        onClick = { vm.togglePlayPause(take) },
-        onPlay = { vm.togglePlayPause(take) },
+        selectionMode = selectionMode,
+        selected = selected,
+        onClick = {
+            if (selectionMode) vm.toggleTakeSelection(take.id) else vm.togglePlayPause(take)
+        },
+        onPlay = {
+            if (selectionMode) vm.toggleTakeSelection(take.id) else vm.togglePlayPause(take)
+        },
+        onLongClick = if (selectionMode) null else ({ vm.showDialog(SongDetailDialog.TakeOptions(take)) }),
+        modifier = Modifier.testTag("take_row_${take.id}"),
         trailing = {
             Surface(
                 onClick = { vm.showDialog(SongDetailDialog.TakeOptions(take)) },
@@ -662,27 +801,82 @@ private fun TakeRow(take: Take, nowPlaying: NowPlaying?, vm: SongDetailViewModel
     )
 }
 
-private fun TakeListState.takesOrEmpty(): List<Take> = when (this) {
-    is TakeListState.Empty -> emptyList()
-    is TakeListState.Populated -> takes
-    is TakeListState.Playing -> takes
-    is TakeListState.Transcoding -> takes
-    is TakeListState.Unavailable -> takes
-}
-
 @Composable
-private fun TakesTab(state: TakeListState, vm: SongDetailViewModel, onRecord: () -> Unit, scrollTarget: String?, onScrolled: () -> Unit) {
+private fun TakesTab(
+    state: TakeListState,
+    vm: SongDetailViewModel,
+    onRecord: () -> Unit,
+    scrollTarget: String?,
+    onScrolled: () -> Unit,
+    selectionMode: Boolean = false,
+    selectedTakeIds: Set<String> = emptySet(),
+) {
     val c = SongPadTheme.colors
     val listState = rememberLazyListState()
+    val visibleTakes = state.takesOrEmpty()
+    val allSelected = visibleTakes.isNotEmpty() && visibleTakes.all { it.id in selectedTakeIds }
     Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .horizontalScroll(rememberScrollState())
-                .padding(start = Spacing.screen, end = Spacing.screen, bottom = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            TakeFilter.entries.forEach { f ->
-                FilterPill(text = f.label, selected = state.filter == f, onClick = { vm.setTakeFilter(f) })
+        if (selectionMode) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = Spacing.screen, end = Spacing.screen, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = if (selectedTakeIds.isEmpty()) "Select takes" else "${selectedTakeIds.size} selected",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontFamily = SongPadFonts.heading,
+                        fontSize = 16.sp,
+                    ),
+                    color = c.text,
+                    modifier = Modifier.testTag("takes_selection_count"),
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterPill(
+                        text = if (allSelected) "Deselect all" else "Select all",
+                        selected = allSelected,
+                        onClick = vm::selectAllVisibleTakes,
+                        modifier = Modifier.testTag("takes_select_all_button"),
+                    )
+                    FilterPill(
+                        text = "Cancel",
+                        selected = false,
+                        onClick = vm::exitTakeSelectionMode,
+                        modifier = Modifier.testTag("takes_cancel_selection_button"),
+                    )
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = Spacing.screen, end = Spacing.screen, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    TakeFilter.entries.forEach { f ->
+                        FilterPill(text = f.label, selected = state.filter == f, onClick = { vm.setTakeFilter(f) })
+                    }
+                }
+                if (visibleTakes.isNotEmpty()) {
+                    FilterPill(
+                        text = "Select",
+                        selected = false,
+                        onClick = { vm.enterTakeSelectionMode() },
+                        modifier = Modifier.testTag("takes_select_mode_button"),
+                    )
+                }
             }
         }
         when (state) {
@@ -693,19 +887,28 @@ private fun TakesTab(state: TakeListState, vm: SongDetailViewModel, onRecord: ()
                 actionLabel = "Record",
                 onAction = onRecord,
             )
-            is TakeListState.Populated -> TakeList(state.takes, null, vm, listState, scrollTarget, onScrolled)
-            is TakeListState.Playing -> TakeList(state.takes, state.playing, vm, listState, scrollTarget, onScrolled)
-            is TakeListState.Transcoding -> TakeList(state.takes, state.playing, vm, listState, scrollTarget, onScrolled)
+            is TakeListState.Populated -> TakeList(state.takes, null, vm, listState, scrollTarget, onScrolled, selectionMode, selectedTakeIds)
+            is TakeListState.Playing -> TakeList(state.takes, state.playing, vm, listState, scrollTarget, onScrolled, selectionMode, selectedTakeIds)
+            is TakeListState.Transcoding -> TakeList(state.takes, state.playing, vm, listState, scrollTarget, onScrolled, selectionMode, selectedTakeIds)
             is TakeListState.Unavailable -> Column {
                 Text(state.reason, Modifier.padding(Spacing.screen), color = c.warning, style = MaterialTheme.typography.bodyMedium)
-                TakeList(state.takes, null, vm, listState, scrollTarget, onScrolled)
+                TakeList(state.takes, null, vm, listState, scrollTarget, onScrolled, selectionMode, selectedTakeIds)
             }
         }
     }
 }
 
 @Composable
-private fun TakeList(takes: List<Take>, np: NowPlaying?, vm: SongDetailViewModel, listState: LazyListState, scrollTarget: String?, onScrolled: () -> Unit) {
+private fun TakeList(
+    takes: List<Take>,
+    np: NowPlaying?,
+    vm: SongDetailViewModel,
+    listState: LazyListState,
+    scrollTarget: String?,
+    onScrolled: () -> Unit,
+    selectionMode: Boolean = false,
+    selectedTakeIds: Set<String> = emptySet(),
+) {
     LaunchedEffect(scrollTarget, takes) {
         if (scrollTarget == null) return@LaunchedEffect
         val index = takes.indexOfFirst { it.id == scrollTarget }
@@ -714,10 +917,73 @@ private fun TakeList(takes: List<Take>, np: NowPlaying?, vm: SongDetailViewModel
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         state = listState,
-        contentPadding = PaddingValues(start = Spacing.screen, end = Spacing.screen, bottom = 96.dp),
+        contentPadding = PaddingValues(start = Spacing.screen, end = Spacing.screen, bottom = if (selectionMode) 24.dp else 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        items(takes, key = { it.id }) { TakeRow(it, np, vm) }
+        items(takes, key = { it.id }) {
+            TakeRow(
+                take = it,
+                nowPlaying = np,
+                vm = vm,
+                selectionMode = selectionMode,
+                selected = it.id in selectedTakeIds,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun BatchTakeSelectionBottomBar(
+    selectedCount: Int,
+    onCancel: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = SongPadTheme.colors
+    Surface(
+        color = c.surface,
+        contentColor = c.text,
+        border = BorderStroke(1.dp, c.divider),
+        shadowElevation = 6.dp,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.screen, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            SecondaryButton(
+                text = "Cancel",
+                onClick = onCancel,
+                modifier = Modifier.testTag("batch_cancel_selection_button"),
+            )
+            Surface(
+                onClick = onDelete,
+                enabled = selectedCount > 0,
+                shape = RoundedCornerShape(Radii.pill),
+                color = if (selectedCount > 0) c.destructive else c.surfaceVariant,
+                contentColor = if (selectedCount > 0) Color.White else c.textTertiary,
+                modifier = Modifier
+                    .defaultMinSize(minHeight = Dimens.minTouchTarget)
+                    .testTag("batch_delete_takes_button"),
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                ) {
+                    Text(
+                        text = if (selectedCount > 0) "Delete ($selectedCount)" else "Delete",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontFamily = SongPadFonts.heading,
+                            fontWeight = FontWeight.Normal,
+                            fontSize = 14.sp,
+                        ),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1389,6 +1655,7 @@ private fun NotesTab(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NoteBubbleRow(
     note: Note,
@@ -1423,8 +1690,16 @@ private fun NoteBubbleRow(
             border = BorderStroke(1.dp, bubbleBorder),
             modifier = Modifier
                 .widthIn(max = 310.dp)
-                .then(
-                    if (voiceTake != null) Modifier.clickable { vm.togglePlayPause(voiceTake) } else Modifier
+                .clip(bubbleShape)
+                .combinedClickable(
+                    onClick = {
+                        if (voiceTake != null) {
+                            vm.togglePlayPause(voiceTake)
+                        } else {
+                            vm.showDialog(SongDetailDialog.NoteOptions(note))
+                        }
+                    },
+                    onLongClick = { vm.showDialog(SongDetailDialog.NoteOptions(note)) },
                 ),
         ) {
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
